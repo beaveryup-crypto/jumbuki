@@ -185,12 +185,19 @@
                 land();
             }
         }
-        // 발판 삭제 로직
+
         let highestPlatform = platforms[platforms.length - 1];
-        if (player.y < highestPlatform.y + 500) {
+        if (player.y < highestPlatform.y + 200) {
             for(let k = 1; k <= 10; k++) addPlatform(highestPlatform.index + k);
         }
 
+// 발판이 200개 이상 쌓였을 때만 삭제 시작
+if (platforms.length > 200) {
+    // 플레이어 위치보다 화면 10개 높이 만큼 더 아래에 있는 것만 삭제
+    platforms = platforms.filter(p => p.y < player.y + (canvas.height * 10));
+}
+
+	// 3. 카메라 이동 로직
         const screenPositionTarget = canvas.height * 0.7;
         let targetCameraY = Math.min(0, player.y - screenPositionTarget);
         // 카메라 부드러움도 시간 보정
@@ -285,14 +292,14 @@
         ctx.fillStyle = "black"; ctx.fillText(`최고: ${highScore}`, 21, 41); ctx.fillText(`높이: ${curH}`, 21, 71);
         ctx.fillStyle = "#f1c40f"; ctx.fillText(`최고: ${highScore}`, 20, 40);
         ctx.fillStyle = "white"; ctx.fillText(`높이: ${curH}`, 20, 70);
-        
-        if (curH < 500) 
+
+ if (curH < 500) 
         {
             ctx.font = "bold 16px Arial";
             ctx.fillStyle = "black";
             ctx.fillText(jumpDirection === 1 ? "다음 점프 ▶" : "다음 점프 ◀", 20, 100);
         }
-        
+
         requestAnimationFrame(draw);
     }
 
@@ -301,5 +308,3 @@
 </script>
 </body>
 </html>
-
-
