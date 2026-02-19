@@ -56,7 +56,8 @@
         y: floorY,
         vx: 0,
         vy: 0,
-        isJumping: false
+        isJumping: false,
+        standingOn: null // 현재 밟고 있는 발판 정보 저장용
     };
 
     function draw8GridBlockyPlayer(ctx, x, y, width, height) {
@@ -98,14 +99,25 @@
     let cameraY = 0;
     const cameraSmoothness = 0.2;
     let lastTime = 0;
+    let lastMovingIndex = 0; 
 
-    function startCharge() {
-        initAudio();
-        if (!player.isJumping) {
-            isCharging = true;
-            power = 0;
-        }
+function startCharge() {
+    initAudio();
+    
+    // [추가] 스페이스바가 눌린 상태에서 클릭하면 위로 상승 (테스트용)
+    if (isSpacePressed) {
+        player.isJumping = true;
+        player.standingOn = null;
+        player.vy = -30; // 위로 솟구치는 힘 (숫자가 클수록 더 높이 점프)
+        player.vx = 0;   // 옆으로는 움직이지 않게 설정
+        return; // 일반 점프 기모으기 로직을 실행하지 않고 종료
     }
+
+    if (!player.isJumping) {
+        isCharging = true;
+        power = 0;
+    }
+}
 
     function endCharge() {
         if (isCharging) {
@@ -119,10 +131,20 @@
     canvas.addEventListener('touchstart', (e) => { e.preventDefault(); startCharge(); }, { passive: false });
     canvas.addEventListener('touchend', (e) => { e.preventDefault(); endCharge(); }, { passive: false });
 
+let isSpacePressed = false; // 테스트용 스페이스바가 눌려있는지 확인
+// 키보드 이벤트 리스너 추가
+window.addEventListener('keydown', (e) => {
+    if (e.code === 'Space') isSpacePressed = true;
+});
+window.addEventListener('keyup', (e) => {
+    if (e.code === 'Space') isSpacePressed = false;
+});
+
     function jump() {
         player.vy = -power;
         player.vx = (power * 0.4) * jumpDirection;
         player.isJumping = true;
+        player.standingOn = null; // 점프 시 발판에서 분리
         jumpDirection *= -1;
         playJumpSound();
     }
@@ -132,61 +154,72 @@
         for (let i = 1; i <= 20; i++) addPlatform(i);
     }
 
-let lastMovingIndex = 0; 
-
-function addPlatform(index) {
-    const minWidth = 30;
-    const baseWidth = 100;
-    const platformHeight = 15;
-    let dynamicWidth = Math.max(minWidth, baseWidth - (index * 0.2)); 
-    
-    let speed = 0;
-    
-    // [조건 추가] 
-    // 1. index가 150(약 2000점) 이상이고
-    // 2. 마지막 움직이는 발판으로부터 최소 3칸 이상 떨어졌을 때만 (연속 출현 방지)
-    // 3. 50%의 확률로 움직이게 설정
-//(index - lastMovingIndex) > 5로 숫자를 키우면 움직이는 발판이 훨씬 드문드문 나옵니다.
-//더 예측 불가능한 게임: Math.random() < 0.3으로 확률을 낮추면 움직이는 발판이 언제 나올지 몰라 더 긴장감 있게 변합니다.
-    if (index > 150 && (index - lastMovingIndex) > 3) {
-        if (Math.random() < 0.5) {
-            speed = (Math.random() < 0.5 ? 1 : -1) * (2 + Math.min(5, index / 100));
-            lastMovingIndex = index; // 마지막으로 움직인 위치 기록
-        }
-    }
-
-    let plat = {
-        index: index,
-        x: Math.random() * (canvas.width - dynamicWidth),
-        y: floorY - (index * 135),
-        width: dynamicWidth,
-        height: platformHeight,
-        speed: speed,
-        holes: []
-    };
-    
-    for (let j = 0; j < 3; j++) {
-        plat.holes.push({ x: Math.random() * dynamicWidth, y: Math.random() * platformHeight, size: 2 + Math.random() * 4 });
-    }
-    platforms.push(plat);
-}
-
-    // --- [물리 엔진 시간 보정 적용] ---
-    function update(dt) {
-        // 기준 프레임(60fps) 대비 시간 배율 계산
-        const timeAdj = dt * 60; 
-
-// --- [추가: 발판 이동 로직] ---
-    platforms.forEach(plat => {
-        if (plat.speed !== 0) {
-            plat.x += plat.speed * timeAdj;
-
-            // 벽에 부딪히면 반대로 튕기기
-            if (plat.x <= 0 || plat.x + plat.width >= canvas.width) {
-                plat.speed *= -1;
+    function addPlatform(index) {
+        const minWidth = 30;
+        const baseWidth = 100;
+        const platformHeight = 15;
+        let dynamicWidth = Math.max(minWidth, baseWidth - (index * 0.2)); 
+        
+        let speed = 0;
+        // curH 2000 근처(index 150)부터 연속 출현 방지 로직 적용
+        if (index > 150 && (index - lastMovingIndex) > 3) {
+            if (Math.random() < 0.5) {
+                speed = (Math.random() < 0.5 ? 1 : -1) * (2 + Math.min(5, index / 100));
+                lastMovingIndex = index;
             }
         }
-    });
+
+        let plat = {
+            index: index,
+            x: Math.random() * (canvas.width - dynamicWidth),
+            y: floorY - (index * 135),
+            width: dynamicWidth,
+            height: platformHeight,
+            speed: speed,
+            holes: []
+        };
+        for (let j = 0; j < 3; j++) {
+            plat.holes.push({ x: Math.random() * dynamicWidth, y: Math.random() * platformHeight, size: 2 + Math.random() * 4 });
+        }
+        platforms.push(plat);
+    }
+
+    function land(plat) {
+        player.vy = 0; 
+        player.vx = 0;
+        player.isJumping = false;
+        player.standingOn = plat; // 착지한 발판 저장
+        player.angle = Math.round(player.angle / (Math.PI / 2)) * (Math.PI / 2);
+    }
+
+    function update(dt) {
+        const timeAdj = dt * 60; 
+
+// 1. 발판 이동 및 캐릭터 동기화
+platforms.forEach(plat => {
+    if (plat.speed !== 0) {
+        const moveStep = plat.speed * timeAdj;
+        plat.x += moveStep;
+
+        // [끼임 방지 로직 추가]
+        if (plat.x <= 0) {
+            plat.x = 0;         // 왼쪽 벽에 붙이기
+            plat.speed *= -1;   // 방향 반전
+        } else if (plat.x + plat.width >= canvas.width) {
+            plat.x = canvas.width - plat.width; // 오른쪽 벽에 붙이기
+            plat.speed *= -1;   // 방향 반전
+        }
+
+        // 캐릭터가 이 발판 위에 있다면 같이 이동
+        if (!player.isJumping && player.standingOn === plat) {
+            player.x += moveStep;
+            
+            // 캐릭터도 벽 밖으로 나가지 않게 보정
+            if (player.x < 0) player.x = 0;
+            if (player.x + player.width > canvas.width) player.x = canvas.width - player.width;
+        }
+    }
+});
 
         if (isCharging) {
             power = Math.min(maxPower, power + 0.4 * timeAdj);
@@ -207,39 +240,30 @@ function addPlatform(index) {
                     if (player.x + player.width > plat.x && player.x < plat.x + plat.width &&
                         player.y + player.height > plat.y && player.y + player.height < plat.y + plat.height + (player.vy * timeAdj)) {
                         player.y = plat.y - player.height;
-                        land();
+                        land(plat);
                     }
                 });
             }
 
             if (player.y >= floorY) {
                 player.y = floorY;
-                land();
+                land(null);
             }
         }
 
         let highestPlatform = platforms[platforms.length - 1];
-        if (player.y < highestPlatform.y + 200) {
+        if (player.y < highestPlatform.y + 500) {
             for(let k = 1; k <= 10; k++) addPlatform(highestPlatform.index + k);
         }
 
-// 발판이 200개 이상 쌓였을 때만 삭제 시작
-if (platforms.length > 200) {
-    // 플레이어 위치보다 화면 10개 높이 만큼 더 아래에 있는 것만 삭제
-    platforms = platforms.filter(p => p.y < player.y + (canvas.height * 10));
-}
+        // 발판 삭제 로직 (화면 10배 여유)
+        if (platforms.length > 200) {
+            platforms = platforms.filter(p => p.y < player.y + (canvas.height * 10));
+        }
 
-	// 3. 카메라 이동 로직
         const screenPositionTarget = canvas.height * 0.7;
         let targetCameraY = Math.min(0, player.y - screenPositionTarget);
-        // 카메라 부드러움도 시간 보정
         cameraY += (targetCameraY - cameraY) * (cameraSmoothness * timeAdj);
-    }
-
-    function land() {
-        player.vy = 0; player.vx = 0;
-        player.isJumping = false;
-        player.angle = Math.round(player.angle / (Math.PI / 2)) * (Math.PI / 2);
     }
 
     function playJumpSound() {
@@ -270,13 +294,12 @@ if (platforms.length > 200) {
     for(let i=0; i<100; i++) stars.push({ x: Math.random() * canvas.width, y: -Math.random() * 20000, size: Math.random() * 2 });
 
     function draw(timestamp) {
-        // Delta Time 계산
         let dt = (timestamp - lastTime) / 1000;
         if (isNaN(dt)) dt = 0;
         lastTime = timestamp;
-        if (dt > 0.1) dt = 0.1; // 렉 발생 시 튐 방지
+        if (dt > 0.1) dt = 0.1;
 
-        update(dt); // 물리 업데이트
+        update(dt);
 
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         
@@ -297,7 +320,9 @@ if (platforms.length > 200) {
         platforms.forEach(plat => {
             ctx.save();
             ctx.beginPath(); ctx.rect(plat.x, plat.y, plat.width, plat.height); ctx.clip();
-            ctx.fillStyle = "#FFD700"; ctx.fillRect(plat.x, plat.y, plat.width, plat.height);
+            // 움직이는 발판은 색상을 다르게 표시 (선택 사항)
+           ctx.fillStyle = "#FFD700";
+            ctx.fillRect(plat.x, plat.y, plat.width, plat.height);
             ctx.fillStyle = "#E6B800";
             plat.holes.forEach(h => { ctx.beginPath(); ctx.arc(plat.x + h.x, plat.y + h.y, h.size, 0, Math.PI*2); ctx.fill(); });
             ctx.restore();
@@ -305,7 +330,7 @@ if (platforms.length > 200) {
 
         ctx.save();
         ctx.translate(player.x + player.width/2, player.y + player.height/2);
-        if (player.isJumping) player.angle += (player.vx > 0 ? 0.2 : -0.2) * (dt * 60); // 회전 속도 보정
+        if (player.isJumping) player.angle += (player.vx > 0 ? 0.2 : -0.2) * (dt * 60);
         ctx.rotate(player.angle);
         draw8GridBlockyPlayer(ctx, -player.width/2, -player.height/2, player.width, player.height);
         ctx.restore();
@@ -325,11 +350,17 @@ if (platforms.length > 200) {
         ctx.fillStyle = "#f1c40f"; ctx.fillText(`최고: ${highScore}`, 20, 40);
         ctx.fillStyle = "white"; ctx.fillText(`높이: ${curH}`, 20, 70);
 
- if (curH < 500) 
-        {
+        if (curH < 500) {
             ctx.font = "bold 16px Arial";
+            ctx.fillStyle = "white";
+	ctx.textAlign = "center";
+            ctx.fillText(jumpDirection === 1 ? "다음 점프 방향 >>" : "<< 다음 점프 방향", 201, 51);
+
             ctx.fillStyle = "black";
-            ctx.fillText(jumpDirection === 1 ? "다음 점프 ▶" : "다음 점프 ◀", 20, 100);
+	ctx.textAlign = "center";
+            ctx.fillText(jumpDirection === 1 ? "다음 점프 방향 >>" : "<< 다음 점프 방향", 200, 50);
+
+ctx.textAlign = "left";
         }
 
         requestAnimationFrame(draw);
