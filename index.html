@@ -277,7 +277,10 @@ function update() {
     for(let i=0; i<100; i++) stars.push({ x: Math.random() * canvas.width, y: -Math.random() * 20000, size: Math.random() * 2 });
 
 function draw() {
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
+    // 1. 물리 업데이트를 가장 먼저 한 번만 수행
+    update(); 
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
         
         // 1. 배경색 (고도에 따라 변화)
         let altitude = Math.min(1, Math.abs(cameraY) / 20000);
@@ -347,8 +350,6 @@ const groundBase = floorY + 40;
             ctx.fillStyle = "black";
             ctx.fillText(jumpDirection === 1 ? "다음 점프 ▶" : "다음 점프 ◀", 20, 100);
         }
-
-        update();
         requestAnimationFrame(draw);
     }
 
