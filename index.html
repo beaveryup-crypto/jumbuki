@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta charset="UTF-8">
+    <title>Jump Game - Phase 1</title>
+    <style>
+        body {
+            margin: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            height: 100dvh; 
+            background-color: #f0f0f0;
+            overflow: hidden;
+            position: fixed;
+            width: 100%;
+        }
+        #gameCanvas {
+            background-color: #222;
+            border: 5px solid #333;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+            max-width: 100%;
+            max-height: 100vh; 
+            object-fit: contain; 
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas" width="400" height="700"></canvas>
+
+<script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+
+    // --- [1. 오디오 시스템 아이폰 대응 수정] ---
+    let audioCtx = null;
+    function initAudio() {
+        if (!audioCtx) {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        if (audioCtx.state === 'suspended') {
+            audioCtx.resume();
+        }
+    }
+
+    const gravity = 0.5;
+    const floorY = canvas.height - 60;
+
+    const player = {
+        angle: 0,
+        width: 64,
+        height: 64,
+        x: (canvas.width / 2) - 32,
+        y: floorY,
+        vx: 0,
+        vy: 0,
+        isJumping: false
+    };
+
+function draw8GridBlockyPlayer(ctx, x, y, width, height) {
+        const gridSize = 8;
+        const pixelSize = width / gridSize;
+        
+        // 이미지 캐릭터 기반 색상 팔레트
+        const colors = {
+            hair: "#BCA9E1",   // 연보라 머리카락
+            ribbon: "#E74C3C", // 붉은색 리본 및 하의
+            skin: "#FFF0ED",   // 밝은 피부색
+            top: "#FFFFFF",    // 흰색 상의
+            sock: "#565056",   // 줄무늬 양말용 파란색
+            eye1: "#66A1DA",    // 눈 (짙은 갈색 계열)
+            eye2: "#FBB76F",    // 눈 (짙은 갈색 계열)
+            acc: "#F1C40F"     // 노란색 장식 포인트
+        };
+
+        ctx.save();
+        const p = (gx, gy, color) => {
+            ctx.fillStyle = color;
+            ctx.fillRect(x + gx * pixelSize, y + gy * pixelSize, pixelSize + 0.5, pixelSize + 0.5);
+        };
+	p(1, -1, colors.hair); p(6, -1, colors.hair);
+
+        // 0-1행: 머리카락과 귀 부분
+        for(let i=0; i<8; i++) p(i, 0, colors.hair);
+        for(let i=0; i<8; i++) p(i, 1, colors.hair);
+
+        // 2-4행: 얼굴 (머리카락 테두리와 눈)
+        for(let j=2; j<=4; j++) {
+            p(0, j, colors.hair); // 왼쪽 머리카락
+            for(let i=1; i<7; i++) p(i, j, colors.skin);
+            p(7, j, colors.hair); // 오른쪽 머리카락
+        }
+        p(2, 3, colors.eye1); p(5, 3, colors.eye2); // 눈 위치
+        p(3, 2, colors.hair); p(4, 2, colors.hair); // 앞머리 살짝
+
+        // 5행: 상의와 붉은색 리본 포인트
+        p(0, 5, colors.top); p(1, 5, colors.top);
+        p(2, 5, colors.ribbon); p(5, 5, colors.ribbon); // 리본 장식
+        p(3, 5, colors.top); p(4, 5, colors.top);
+        p(6, 5, colors.top); p(7, 5, colors.top);
+
+        // 6행: 붉은색 하의 (치마 부분)
+        for(let i=1; i<7; i++) p(i, 6, colors.ribbon);
+	p(0, 6, colors.top); p(7, 6, colors.top);
+
+        // 7행: 줄무늬 양말/신발 포인트
+	p(1, 7, colors.sock); p(2, 7, colors.sock);
+	p(5, 7, colors.sock); p(6, 7, colors.sock);
+
+        ctx.restore();
+    }
+
+    let power = 0;
+    let isCharging = false;
+    const maxPower = 20;
+    let jumpDirection = 1;
+    let platforms = [];
+    let cameraY = 0;
+    const cameraSmoothness = 0.2;
+
+    // --- [2. 이벤트 리스너에 initAudio 통합] ---
+    function startCharge() {
+        initAudio(); // 터치 시점에 오디오 깨우기
+        if (!player.isJumping) {
+            isCharging = true;
+            power = 0;
+        }
+    }
+
+    function endCharge() {
+        if (isCharging) {
+            jump();
+            isCharging = false;
+        }
+    }
+
+    window.addEventListener('mousedown', startCharge);
+    window.addEventListener('mouseup', endCharge);
+    canvas.addEventListener('touchstart', (e) => { e.preventDefault(); startCharge(); }, { passive: false });
+    canvas.addEventListener('touchend', (e) => { e.preventDefault(); endCharge(); }, { passive: false });
+
+    function jump() {
+        player.vy = -power;
+        player.vx = (power * 0.4) * jumpDirection;
+        player.isJumping = true;
+        jumpDirection *= -1;
+        playJumpSound();
+    }
+
+function initPlatforms() {
+    platforms = [];
+    const baseWidth = 100;
+    const platformHeight = 15;
+    // 처음에 20개만 생성
+    for (let i = 1; i <= 20; i++) {
+        addPlatform(i);
+    }
+}
+
+// 발판 하나를 만드는 로직을 별도 함수로 분리 (재사용을 위해)
+function addPlatform(index) {
+    const minWidth = 30;
+    const baseWidth = 100;
+    const platformHeight = 15;
+    // 높이 올라갈수록 점점 좁아지지만 최소 30은 유지
+    let dynamicWidth = Math.max(minWidth, baseWidth - (index * 0.2)); 
+    
+    let plat = {
+        index: index, // 몇 번째 발판인지 기록
+        x: Math.random() * (canvas.width - dynamicWidth),
+        y: floorY - (index * 135),
+        width: dynamicWidth,
+        height: platformHeight,
+        holes: []
+    };
+    
+    const holeCount = 2 + Math.floor(Math.random() * 2);
+    for (let j = 0; j < holeCount; j++) {
+        plat.holes.push({ x: Math.random() * dynamicWidth, y: Math.random() * platformHeight, size: 2 + Math.random() * 4 });
+    }
+    platforms.push(plat);
+}
+
+function update() {
+    if (isCharging) {
+        power = Math.min(maxPower, power + 0.4);
+    }
+
+    if (player.isJumping) {
+        player.x += player.vx;
+        player.y += player.vy;
+        player.vy += gravity;
+
+        // 벽 충돌 로직 생략 (기존과 동일)
+        if (player.x + player.width > canvas.width || player.x < 0) {
+            player.vx *= -0.7;
+            player.x = player.x < 0 ? 0 : canvas.width - player.width;
+        }
+
+        if (player.vy > 0) {
+            platforms.forEach(plat => {
+                if (player.x + player.width > plat.x && player.x < plat.x + plat.width &&
+                    player.y + player.height > plat.y && player.y + player.height < plat.y + plat.height + player.vy) {
+                    player.y = plat.y - player.height;
+                    land();
+                }
+            });
+        }
+
+        if (player.y >= floorY) {
+            player.y = floorY;
+            land();
+        }
+    }
+
+    // --- [무한 생성 로직 추가] ---
+    // 가장 위에 있는 발판의 인덱스를 찾습니다.
+    let highestPlatform = platforms[platforms.length - 1];
+    
+    // 캐릭터가 가장 높은 발판 근처(화면 위쪽)까지 오면 새 발판 10개 더 생성
+    if (player.y < highestPlatform.y + 500) {
+        for(let k = 1; k <= 10; k++) {
+            addPlatform(highestPlatform.index + k);
+        }
+    }
+
+    // 성능을 위해 화면 아래로 너무 멀어진 발판은 제거 (옵션)
+    if (platforms.length > 500) {
+        platforms = platforms.filter(p => p.y < player.y + canvas.height);
+    }
+    // ----------------------------
+
+    const screenPositionTarget = canvas.height * 0.7;
+    let targetCameraY = Math.min(0, player.y - screenPositionTarget);
+    cameraY += (targetCameraY - cameraY) * cameraSmoothness;
+}
+
+    function land() {
+        player.vy = 0;
+        player.vx = 0;
+        player.isJumping = false;
+        player.angle = Math.round(player.angle / (Math.PI / 2)) * (Math.PI / 2);
+    }
+
+    function playJumpSound() {
+        if (!audioCtx) return;
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(150, audioCtx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(600, audioCtx.currentTime + 0.1);
+        gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
+        osc.connect(gain); gain.connect(audioCtx.destination);
+        osc.start(); osc.stop(audioCtx.currentTime + 0.1);
+    }
+
+    function resizeCanvas() {
+        const sw = window.innerWidth;
+        const sh = window.innerHeight;
+        if (sw > 500) {
+            canvas.style.width = "auto";
+            canvas.style.height = "90vh";
+        } else {
+            canvas.style.width = "100vw";
+            canvas.style.height = "100dvh";
+        }
+    }
+    window.addEventListener('resize', resizeCanvas);
+    resizeCanvas();
+
+    const startY = floorY;
+    let highScore = parseInt(localStorage.getItem("jumpGame_highScore")) || 0;
+    let stars = [];
+    for(let i=0; i<100; i++) stars.push({ x: Math.random() * canvas.width, y: -Math.random() * 20000, size: Math.random() * 2 });
+
+function draw() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
+        // 1. 배경색 (고도에 따라 변화)
+        let altitude = Math.min(1, Math.abs(cameraY) / 20000);
+        ctx.fillStyle = `rgb(${Math.floor(135-125*altitude)}, ${Math.floor(206-196*altitude)}, ${Math.floor(235-215*altitude)})`;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        ctx.save();
+        ctx.translate(0, -cameraY); // 카메라 시점 시작
+
+        // 2. 별 그리기
+        ctx.fillStyle = "white";
+        stars.forEach(s => { ctx.beginPath(); ctx.arc(s.x, s.y, s.size, 0, Math.PI*2); ctx.fill(); });
+
+        // 3. [중요] 시작 지점 땅 그리기 (위치 수정: floorY + player.height)
+        // 캐릭터가 밟고 있는 높이에 딱 맞게 조정했습니다.
+const groundBase = floorY + 40;
+        
+        // 1. 흙 (아주 깊게 그려서 화면 밑이 비지 않게 합니다)
+        ctx.fillStyle = "#8B4513"; 
+        ctx.fillRect(0, groundBase, canvas.width, 2000); 
+
+        // 2. 잔디 (캐릭터 발 바로 밑에 위치)
+        ctx.fillStyle = "#228B22"; 
+        ctx.fillRect(0, groundBase, canvas.width, 40);
+
+        // 4. 발판 그리기
+        platforms.forEach(plat => {
+            ctx.save();
+            ctx.beginPath(); ctx.rect(plat.x, plat.y, plat.width, plat.height); ctx.clip();
+            ctx.fillStyle = "#FFD700"; ctx.fillRect(plat.x, plat.y, plat.width, plat.height);
+            ctx.fillStyle = "#E6B800";
+            plat.holes.forEach(h => { ctx.beginPath(); ctx.arc(plat.x + h.x, plat.y + h.y, h.size, 0, Math.PI*2); ctx.fill(); });
+            ctx.restore();
+        });
+
+        // 5. 캐릭터 그리기
+        ctx.save();
+        ctx.translate(player.x + player.width/2, player.y + player.height/2);
+        if (player.isJumping) player.angle += (player.vx > 0 ? 0.2 : -0.2);
+        ctx.rotate(player.angle);
+        draw8GridBlockyPlayer(ctx, -player.width/2, -player.height/2, player.width, player.height);
+        ctx.restore();
+
+        // 6. 점프 게이지
+        if (isCharging) {
+            ctx.fillStyle = "#ccc"; ctx.fillRect(player.x, player.y - 20, player.width, 10);
+            ctx.fillStyle = "#e74c3c"; ctx.fillRect(player.x, player.y - 20, (power/maxPower)*player.width, 10);
+        }
+
+        ctx.restore(); // 카메라 시점 종료
+
+        // 7. UI 표시 (화면 고정)
+        const curH = Math.max(0, Math.floor((startY - player.y) / 10));
+        if (curH > highScore) { highScore = curH; localStorage.setItem("jumpGame_highScore", highScore); }
+
+        ctx.font = "bold 16px Arial";
+        ctx.fillStyle = "black"; 
+        ctx.fillText(`최고: ${highScore}`, 21, 41); 
+        ctx.fillText(`높이: ${curH}`, 21, 71);
+        ctx.fillStyle = "#f1c40f"; 
+        ctx.fillText(`최고: ${highScore}`, 20, 40);
+        ctx.fillStyle = "white"; 
+        ctx.fillText(`높이: ${curH}`, 20, 70);
+
+        if (curH < 500) {
+            ctx.font = "bold 16px Arial";
+            ctx.fillStyle = "black";
+            ctx.fillText(jumpDirection === 1 ? "다음 점프 ▶" : "다음 점프 ◀", 20, 100);
+        }
+
+        update();
+        requestAnimationFrame(draw);
+    }
+
+    initPlatforms();
+    draw();
+</script>
+</body>
+</html>
