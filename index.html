@@ -132,29 +132,61 @@
         for (let i = 1; i <= 20; i++) addPlatform(i);
     }
 
-    function addPlatform(index) {
-        const minWidth = 30;
-        const baseWidth = 100;
-        const platformHeight = 15;
-        let dynamicWidth = Math.max(minWidth, baseWidth - (index * 0.2)); 
-        let plat = {
-            index: index,
-            x: Math.random() * (canvas.width - dynamicWidth),
-            y: floorY - (index * 135),
-            width: dynamicWidth,
-            height: platformHeight,
-            holes: []
-        };
-        for (let j = 0; j < 3; j++) {
-            plat.holes.push({ x: Math.random() * dynamicWidth, y: Math.random() * platformHeight, size: 2 + Math.random() * 4 });
+let lastMovingIndex = 0; 
+
+function addPlatform(index) {
+    const minWidth = 30;
+    const baseWidth = 100;
+    const platformHeight = 15;
+    let dynamicWidth = Math.max(minWidth, baseWidth - (index * 0.2)); 
+    
+    let speed = 0;
+    
+    // [조건 추가] 
+    // 1. index가 150(약 2000점) 이상이고
+    // 2. 마지막 움직이는 발판으로부터 최소 3칸 이상 떨어졌을 때만 (연속 출현 방지)
+    // 3. 50%의 확률로 움직이게 설정
+//(index - lastMovingIndex) > 5로 숫자를 키우면 움직이는 발판이 훨씬 드문드문 나옵니다.
+//더 예측 불가능한 게임: Math.random() < 0.3으로 확률을 낮추면 움직이는 발판이 언제 나올지 몰라 더 긴장감 있게 변합니다.
+    if (index > 150 && (index - lastMovingIndex) > 3) {
+        if (Math.random() < 0.5) {
+            speed = (Math.random() < 0.5 ? 1 : -1) * (2 + Math.min(5, index / 100));
+            lastMovingIndex = index; // 마지막으로 움직인 위치 기록
         }
-        platforms.push(plat);
     }
+
+    let plat = {
+        index: index,
+        x: Math.random() * (canvas.width - dynamicWidth),
+        y: floorY - (index * 135),
+        width: dynamicWidth,
+        height: platformHeight,
+        speed: speed,
+        holes: []
+    };
+    
+    for (let j = 0; j < 3; j++) {
+        plat.holes.push({ x: Math.random() * dynamicWidth, y: Math.random() * platformHeight, size: 2 + Math.random() * 4 });
+    }
+    platforms.push(plat);
+}
 
     // --- [물리 엔진 시간 보정 적용] ---
     function update(dt) {
         // 기준 프레임(60fps) 대비 시간 배율 계산
         const timeAdj = dt * 60; 
+
+// --- [추가: 발판 이동 로직] ---
+    platforms.forEach(plat => {
+        if (plat.speed !== 0) {
+            plat.x += plat.speed * timeAdj;
+
+            // 벽에 부딪히면 반대로 튕기기
+            if (plat.x <= 0 || plat.x + plat.width >= canvas.width) {
+                plat.speed *= -1;
+            }
+        }
+    });
 
         if (isCharging) {
             power = Math.min(maxPower, power + 0.4 * timeAdj);
