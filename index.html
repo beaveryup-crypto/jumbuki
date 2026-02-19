@@ -185,7 +185,7 @@
                 land();
             }
         }
-
+        // 발판 삭제 로직
         let highestPlatform = platforms[platforms.length - 1];
         if (player.y < highestPlatform.y + 500) {
             for(let k = 1; k <= 10; k++) addPlatform(highestPlatform.index + k);
@@ -301,4 +301,5 @@
 </script>
 </body>
 </html>
+
 
