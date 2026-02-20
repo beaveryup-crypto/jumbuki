@@ -3,371 +3,485 @@
 <head>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <meta charset="UTF-8">
-    <title>Jump Game - Balanced</title>
+    <title>Jump Game - JUMBUKI</title>
     <style>
-        body {
-            margin: 0;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            height: 100vh;
-            height: 100dvh; 
-            background-color: #f0f0f0;
-            overflow: hidden;
-            position: fixed;
-            width: 100%;
-        }
-        #gameCanvas {
-            background-color: #222;
-            border: 5px solid #333;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
-            max-width: 100%;
-            max-height: 100vh; 
-            object-fit: contain; 
-        }
+        body { margin: 0; display: flex; justify-content: center; align-items: center; height: 100vh; height: 100dvh; background-color: #f0f0f0; overflow: hidden; position: fixed; width: 100%; }
+        #gameCanvas { background-color: #222; border: 5px solid #333; box-shadow: 0 10px 30px rgba(0,0,0,0.3); max-width: 100%; max-height: 100vh; object-fit: contain; }
     </style>
 </head>
 <body>
     <canvas id="gameCanvas" width="400" height="700"></canvas>
 
 <script>
-    const canvas = document.getElementById('gameCanvas');
+const canvas = document.getElementById('gameCanvas');
     const ctx = canvas.getContext('2d');
 
-    // --- [1. 오디오 시스템] ---
-    let audioCtx = null;
-    function initAudio() {
-        if (!audioCtx) {
-            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-        }
-        if (audioCtx.state === 'suspended') {
-            audioCtx.resume();
+    let gameState = 'LOBBY'; 
+    let isPopupOpen = false;
+    let popupType = ""; 
+
+    // --- [데이터 관리] ---
+    // 1. 코인 불러오기
+    let coins = parseInt(localStorage.getItem("jumpGame_coins")) || 0;
+    
+    // 2. 구매한 캐릭터 리스트 불러오기 (없으면 기본 캐릭터 "Tenko Shibuki"만 들어있는 배열 생성)
+    let unlockedHeroes = JSON.parse(localStorage.getItem("jumpGame_unlocked")) || ["Tenko Shibuki"];
+
+    // 저장 함수들
+    function saveCoins() { localStorage.setItem("jumpGame_coins", coins); }
+    
+    // 캐릭터 구매 상태를 로컬 스토리지에 저장하는 함수
+    function saveUnlockedHeroes() { 
+        localStorage.setItem("jumpGame_unlocked", JSON.stringify(unlockedHeroes)); 
+    }
+
+    // 저장 실행 함수 (코인 소모 포함)
+function executeSave() {
+        if (coins >= 10) {
+            coins -= 10;
+            saveCoins();
+            
+            // 현재 시간을 "YYYY-MM-DD HH:MM" 포맷으로 생성
+            const now = new Date();
+            const timeStr = `${now.getFullYear()}-${(now.getMonth()+1).toString().padStart(2, '0')}-${now.getDate().toString().padStart(2, '0')} ${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
+
+            const gameData = {
+                player: { x: player.x, y: player.y, angle: player.angle, jumpDirection: jumpDirection },
+                platforms: platforms,
+                cameraY: cameraY,
+                lastMovingIndex: lastMovingIndex,
+                saveDate: timeStr // 저장 시간 추가
+            };
+            localStorage.setItem("jumpGame_saveData", JSON.stringify(gameData));
+            isPopupOpen = false;
         }
     }
 
-    const gravity = 0.5;
-    const floorY = canvas.height - 60;
+    function loadGameProgress() {
+        const saved = localStorage.getItem("jumpGame_saveData");
+        if (!saved) return false;
+        const data = JSON.parse(saved);
+        player.x = data.player.x; player.y = data.player.y;
+        player.angle = data.player.angle; jumpDirection = data.player.jumpDirection;
+        platforms = data.platforms; cameraY = data.cameraY;
+        lastMovingIndex = data.lastMovingIndex;
+        player.isJumping = true; player.vy = 0;
+        
+        // 이어하기 성공 후 데이터 삭제
+        localStorage.removeItem("jumpGame_saveData");
+        return true;
+    }
 
-    const player = {
-        angle: 0,
-        width: 64,
-        height: 64,
-        x: (canvas.width / 2) - 32,
-        y: floorY,
-        vx: 0,
-        vy: 0,
-        isJumping: false,
-        standingOn: null // 현재 밟고 있는 발판 정보 저장용
+    // --- [공용 스타일 함수] ---
+    function drawCoinStyle(ctx, cx, cy, r) {
+        ctx.save(); ctx.fillStyle = "white"; ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill();
+        ctx.save(); ctx.beginPath(); ctx.moveTo(cx, cy); ctx.arc(cx, cy, r, -Math.PI / 6, Math.PI * 5 / 6, true); ctx.closePath(); ctx.clip();
+        const grad = ctx.createLinearGradient(cx - r, cy - r, cx + r, cy + r);
+        grad.addColorStop(0, "#A393EB"); grad.addColorStop(1, "#5E50A1"); ctx.fillStyle = grad; ctx.fill(); ctx.restore();
+        const drawStar = (sx, sy, size, color) => {
+            ctx.fillStyle = color; ctx.beginPath(); ctx.moveTo(sx, sy - size); ctx.lineTo(sx + size * 0.5, sy); ctx.lineTo(sx, sy + size); ctx.lineTo(sx - size * 0.5, sy); ctx.fill();
+            ctx.beginPath(); ctx.moveTo(sx - size, sy); ctx.lineTo(sx, sy - size * 0.5); ctx.lineTo(sx + size, sy); ctx.lineTo(sx, sy + size * 0.5); ctx.fill();
+        };
+        drawStar(cx - r * 0.35, cy + r * 0.15, r * 0.4, "white"); drawStar(cx - r * 0.25, cy + r * 0.25, r * 0.2, "#A393EB"); ctx.restore();
+    }
+
+    function drawButtonStyled(text, x, y, color, width, height, font) {
+        ctx.fillStyle = color; ctx.fillRect(x - width/2, y - height/2, width, height);
+        ctx.fillStyle = "white"; ctx.font = font; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(text, x, y);
+    }
+
+    // --- [게임 물리 및 캐릭터] ---
+    const gravity = 0.5; const floorY = canvas.height - 60;
+    let currentHero = "Tenko Shibuki"; 
+    const player = { x: canvas.width / 2 - 20, y: floorY, width: 40, height: 40, vx: 0, vy: 0, angle: 0, isJumping: false, standingOn: null };
+
+    const heroData = {
+        "Tenko Shibuki": { render: (p) => { const c = { hair: "#BCA9E1", skin: "#FFF0ED", ribbon: "#E74C3C", top: "#FFFFFF", sock: "#565056", e1: "#66A1DA", e2: "#FBB76F" }; p(1, -1, c.hair); p(6, -1, c.hair); for(let i=0; i<8; i++) { p(i, 0, c.hair); p(i, 1, c.hair); } for(let j=2; j<=4; j++) { p(0, j, c.hair); for(let i=1; i<7; i++) p(i, j, c.skin); p(7, j, c.hair); } p(3, 2, c.hair); p(4, 2, c.hair); p(2, 3, c.e1); p(5, 3, c.e2); for(let i=0; i<8; i++) { if(i===2 || i===5) p(i, 5, c.ribbon); else p(i, 5, c.top); } for(let i=1; i<7; i++) p(i, 6, c.ribbon); p(0, 6, c.top); p(7, 6, c.top); p(1, 7, c.sock); p(2, 7, c.sock); p(5, 7, c.sock); p(6, 7, c.sock); } },
+        "Ayatsuno Yuni": { render: (p) => { const c = { hair: "#FFB7D5", skin: "#FFF0ED", eye: "#B9E2FA", dress: "#B9E2FA" }; for(let i=1; i<7; i++) p(i, 0, c.hair); for(let i=0; i<8; i++) p(i, 1, c.hair); for(let j=2; j<=4; j++) { p(0, j, c.hair); for(let i=1; i<7; i++) p(i, j, c.skin); p(7, j, c.hair); } p(2, 3, c.eye); p(5, 3, c.eye); for(let i=1; i<7; i++) p(i, 5, c.dress); for(let i=0; i<8; i++) p(i, 6, c.dress); p(2, 7, "#FFFFFF"); p(5, 7, "#FFFFFF"); } }
     };
 
-    function draw8GridBlockyPlayer(ctx, x, y, width, height) {
-        const gridSize = 8;
-        const pixelSize = width / gridSize;
-        const colors = {
-            hair: "#BCA9E1", skin: "#FFF0ED", ribbon: "#E74C3C",
-            top: "#FFFFFF", sock: "#565056", eye1: "#66A1DA", eye2: "#FBB76F"
-        };
-        ctx.save();
-        const p = (gx, gy, color) => {
-            ctx.fillStyle = color;
-            ctx.fillRect(x + gx * pixelSize, y + gy * pixelSize, pixelSize + 0.5, pixelSize + 0.5);
-        };
-        p(1, -1, colors.hair); p(6, -1, colors.hair);
-        for(let i=0; i<8; i++) p(i, 0, colors.hair);
-        for(let i=0; i<8; i++) p(i, 1, colors.hair);
-        for(let j=2; j<=4; j++) {
-            p(0, j, colors.hair); for(let i=1; i<7; i++) p(i, j, colors.skin); p(7, j, colors.hair);
-        }
-        p(2, 3, colors.eye1); p(5, 3, colors.eye2);
-        p(3, 2, colors.hair); p(4, 2, colors.hair);
-        p(0, 5, colors.top); p(1, 5, colors.top);
-        p(2, 5, colors.ribbon); p(5, 5, colors.ribbon);
-        p(3, 5, colors.top); p(4, 5, colors.top);
-        p(6, 5, colors.top); p(7, 5, colors.top);
-        for(let i=1; i<7; i++) p(i, 6, colors.ribbon);
-        p(0, 6, colors.top); p(7, 6, colors.top);
-        p(1, 7, colors.sock); p(2, 7, colors.sock);
-        p(5, 7, colors.sock); p(6, 7, colors.sock);
-        ctx.restore();
+    function drawHero(ctx, x, y, width, height, heroName) {
+        const hero = heroData[heroName] || heroData["Tenko Shibuki"];
+        const gridSize = 8; const pixelSize = Math.floor(width / gridSize); ctx.save();
+        const p = (gx, gy, color) => { ctx.fillStyle = color; ctx.fillRect(x + gx * pixelSize, y + gy * pixelSize, pixelSize, pixelSize); };
+        hero.render(p); ctx.restore();
     }
 
-    let power = 0;
-    let isCharging = false;
-    const maxPower = 20;
-    let jumpDirection = 1;
-    let platforms = [];
-    let cameraY = 0;
-    const cameraSmoothness = 0.2;
-    let lastTime = 0;
-    let lastMovingIndex = 0; 
+    let power = 0; let isCharging = false; const maxPower = 20;
+    let jumpDirection = 1; let platforms = []; let cameraY = 0;
+    const cameraSmoothness = 0.2; let lastTime = 0; let lastMovingIndex = 0; 
+    let shopScrollY = 0; const shopContentHeight = 1200;
 
-function startCharge() {
-    initAudio();
-    
-    // [추가] 스페이스바가 눌린 상태에서 클릭하면 위로 상승 (테스트용)
-    if (isSpacePressed) {
-        player.isJumping = true;
-        player.standingOn = null;
-        player.vy = -30; // 위로 솟구치는 힘 (숫자가 클수록 더 높이 점프)
-        player.vx = 0;   // 옆으로는 움직이지 않게 설정
-        return; // 일반 점프 기모으기 로직을 실행하지 않고 종료
+    // --- [입력 핸들러] ---
+function handleInputStart(x, y) {
+        if (isPopupOpen) {
+            const pw = 300;
+            // CONTINUE 팝업은 높이가 200, 나머지는 180입니다.
+            const ph = (popupType === "CONTINUE") ? 200 : 180;
+            const px = (canvas.width - pw) / 2;
+            const py = (canvas.height - ph) / 2;
+
+if (popupType === "CONTINUE") {
+    // 팝업 높이가 220이므로 py를 그에 맞춰 계산
+    const ph_cont = 220;
+    const py_cont = (canvas.height - ph_cont) / 2;
+    const btnY = py_cont + 160; // 버튼의 Y축 중심점
+    const btnW = 85;
+    const btnH = 40; // 버튼의 높이 절반은 20
+
+    // 1. 이어하기 (좌측: canvas.width / 2 - 95)
+    if (x > canvas.width / 2 - 95 - btnW/2 && x < canvas.width / 2 - 95 + btnW/2 && y > btnY - 20 && y < btnY + 20) {
+        isPopupOpen = false; loadGameProgress(); gameState = 'PLAYING'; initAudio();
     }
-
-    if (!player.isJumping) {
-        isCharging = true;
-        power = 0;
+    // 2. 새로하기 (중앙: canvas.width / 2)
+    else if (x > canvas.width / 2 - btnW/2 && x < canvas.width / 2 + btnW/2 && y > btnY - 20 && y < btnY + 20) {
+        isPopupOpen = false; localStorage.removeItem("jumpGame_saveData"); resetGame(); gameState = 'PLAYING'; initAudio();
     }
-}
-
-    function endCharge() {
-        if (isCharging) {
-            jump();
-            isCharging = false;
-        }
+    // 3. 취소 (우측: canvas.width / 2 + 95)
+    else if (x > canvas.width / 2 + 95 - btnW/2 && x < canvas.width / 2 + 95 + btnW/2 && y > btnY - 20 && y < btnY + 20) {
+        isPopupOpen = false;
     }
-
-    window.addEventListener('mousedown', startCharge);
-    window.addEventListener('mouseup', endCharge);
-    canvas.addEventListener('touchstart', (e) => { e.preventDefault(); startCharge(); }, { passive: false });
-    canvas.addEventListener('touchend', (e) => { e.preventDefault(); endCharge(); }, { passive: false });
-
-let isSpacePressed = false; // 테스트용 스페이스바가 눌려있는지 확인
-// 키보드 이벤트 리스너 추가
-window.addEventListener('keydown', (e) => {
-    if (e.code === 'Space') isSpacePressed = true;
-});
-window.addEventListener('keyup', (e) => {
-    if (e.code === 'Space') isSpacePressed = false;
-});
-
-    function jump() {
-        player.vy = -power;
-        player.vx = (power * 0.4) * jumpDirection;
-        player.isJumping = true;
-        player.standingOn = null; // 점프 시 발판에서 분리
-        jumpDirection *= -1;
-        playJumpSound();
-    }
-
-    function initPlatforms() {
-        platforms = [];
-        for (let i = 1; i <= 20; i++) addPlatform(i);
-    }
-
-    function addPlatform(index) {
-        const minWidth = 30;
-        const baseWidth = 100;
-        const platformHeight = 15;
-        let dynamicWidth = Math.max(minWidth, baseWidth - (index * 0.2)); 
-        
-        let speed = 0;
-        // curH 2000 근처(index 150)부터 연속 출현 방지 로직 적용
-        if (index > 150 && (index - lastMovingIndex) > 3) {
-            if (Math.random() < 0.5) {
-                speed = (Math.random() < 0.5 ? 1 : -1) * (2 + Math.min(5, index / 100));
-                lastMovingIndex = index;
+            } else {
+                // EXIT 및 SAVE_CONFIRM 기존 로직
+                const btnY = py + 150;
+                if (x > canvas.width / 2 - 110 && x < canvas.width / 2 - 20 && y > btnY - 20 && y < btnY + 20) {
+                    if (popupType === "EXIT") { isPopupOpen = false; gameState = 'LOBBY'; resetGame(); }
+                    else if (popupType === "SAVE_CONFIRM" && coins >= 10) { executeSave(); }
+                }
+                if (x > canvas.width / 2 + 20 && x < canvas.width / 2 + 110 && y > btnY - 20 && y < btnY + 20) {
+                    isPopupOpen = false;
+                }
             }
+            return;
         }
 
-        let plat = {
-            index: index,
-            x: Math.random() * (canvas.width - dynamicWidth),
-            y: floorY - (index * 135),
-            width: dynamicWidth,
-            height: platformHeight,
-            speed: speed,
-            holes: []
-        };
-        for (let j = 0; j < 3; j++) {
-            plat.holes.push({ x: Math.random() * dynamicWidth, y: Math.random() * platformHeight, size: 2 + Math.random() * 4 });
+        if (gameState === 'LOBBY') {
+            if (x > 120 && x < 280) {
+                if (y > 295 && y < 345) { 
+                    if (localStorage.getItem("jumpGame_saveData")) { popupType = "CONTINUE"; isPopupOpen = true; } 
+                    else { gameState = 'PLAYING'; initAudio(); resetGame(); }
+                }
+                else if (y > 365 && y < 415) { gameState = 'SHOP'; shopScrollY = 0; }
+                else if (y > 435 && y < 485) { gameState = 'SETTINGS'; }
+            }
+        } else if (gameState === 'PLAYING') {
+            if (x > 310 && x < 395 && y > 15 && y < 50) { popupType = "EXIT"; isPopupOpen = true; }
+            else if (x > 310 && x < 395 && y > 60 && y < 95) { popupType = "SAVE_CONFIRM"; isPopupOpen = true; }
+            else { if (!player.isJumping) { initAudio(); isCharging = true; power = 0; } }
+        } else if (gameState === 'SHOP') {
+            if (x > 120 && x < 280 && y > 620 && y < 680) { gameState = 'LOBBY'; }
+        } else if (gameState === 'SETTINGS') {
+            if (x > 120 && x < 280 && y > 475 && y < 525) { gameState = 'LOBBY'; }
         }
+    }
+
+    let audioCtx = null;
+    function initAudio() { if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)(); if (audioCtx.state === 'suspended') audioCtx.resume(); }
+    function playJumpSound() { if (!audioCtx) return; const osc = audioCtx.createOscillator(); const gain = audioCtx.createGain(); osc.type = 'triangle'; osc.frequency.setValueAtTime(150, audioCtx.currentTime); osc.frequency.exponentialRampToValueAtTime(600, audioCtx.currentTime + 0.1); gain.gain.setValueAtTime(0.1, audioCtx.currentTime); gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1); osc.connect(gain); gain.connect(audioCtx.destination); osc.start(); osc.stop(audioCtx.currentTime + 0.1); }
+    function playCoinSound() { if (!audioCtx) return; const osc = audioCtx.createOscillator(); const gain = audioCtx.createGain(); osc.type = 'sine'; osc.frequency.setValueAtTime(900, audioCtx.currentTime); osc.frequency.exponentialRampToValueAtTime(1200, audioCtx.currentTime + 0.1); gain.gain.setValueAtTime(0.1, audioCtx.currentTime); gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.2); osc.connect(gain); gain.connect(audioCtx.destination); osc.start(); osc.stop(audioCtx.currentTime + 0.2); }
+
+    window.addEventListener('mousedown', (e) => { const pos = getCanvasTouchPos(e); handleInputStart(pos.x, pos.y); });
+    canvas.addEventListener('touchstart', (e) => { const pos = getCanvasTouchPos(e); if (gameState === 'SHOP') touchStartY = e.touches[0].clientY; handleInputStart(pos.x, pos.y); }, { passive: false });
+    window.addEventListener('mouseup', () => { if (isCharging) { jump(); isCharging = false; } });
+    canvas.addEventListener('touchend', (e) => { if (gameState === 'PLAYING' && isCharging) { e.preventDefault(); jump(); isCharging = false; } }, { passive: false });
+
+    function getCanvasTouchPos(e) { const rect = canvas.getBoundingClientRect(); const clientX = e.touches ? e.touches[0].clientX : e.clientX; const clientY = e.touches ? e.touches[0].clientY : e.clientY; return { x: (clientX - rect.left) * (canvas.width / rect.width), y: (clientY - rect.top) * (canvas.height / rect.height) }; }
+    function jump() { player.vy = -power; player.vx = (power * 0.4) * jumpDirection; player.isJumping = true; player.standingOn = null; jumpDirection *= -1; playJumpSound(); }
+
+    function initPlatforms() { platforms = []; for (let i = 1; i <= 20; i++) addPlatform(i); }
+    function addPlatform(index) {
+        const minWidth = 30; const baseWidth = 100; const platformHeight = 15;
+        let dynamicWidth = Math.max(minWidth, baseWidth - (index * 0.2)); 
+        let speed = 0;
+        if (index > 150 && (index - lastMovingIndex) > 3) { if (Math.random() < 0.5) { speed = (Math.random() < 0.5 ? 1 : -1) * (2 + Math.min(5, index / 100)); lastMovingIndex = index; } }
+        let plat = { index: index, x: Math.random() * (canvas.width - dynamicWidth), y: floorY - (index * 135), width: dynamicWidth, height: platformHeight, speed: speed, holes: [], hasCoin: (index > 0 && index % 8 === 0), coinCollected: false };
+        for (let j = 0; j < 3; j++) plat.holes.push({ x: Math.random() * dynamicWidth, y: Math.random() * platformHeight, size: 2 + Math.random() * 4 });
         platforms.push(plat);
     }
 
-    function land(plat) {
-        player.vy = 0; 
-        player.vx = 0;
-        player.isJumping = false;
-        player.standingOn = plat; // 착지한 발판 저장
-        player.angle = Math.round(player.angle / (Math.PI / 2)) * (Math.PI / 2);
+    // --- [공용 팝업 렌더링] ---
+function drawPopup() {
+        if (!isPopupOpen) return;
+        ctx.fillStyle = "rgba(0, 0, 0, 0.7)"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+        
+        const pw = 300; 
+        const ph = (popupType === "CONTINUE") ? 200 : 180;
+        const px = (canvas.width - pw) / 2; 
+        const py = (canvas.height - ph) / 2;
+        
+        ctx.fillStyle = "#2c3e50"; ctx.strokeStyle = "white"; ctx.lineWidth = 3; 
+        ctx.fillRect(px, py, pw, ph); ctx.strokeRect(px, py, pw, ph);
+        ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillStyle = "white";
+
+        if (popupType === "EXIT") {
+            ctx.font = "bold 20px Arial"; ctx.fillText("정말 나가시겠습니까?", canvas.width / 2, py + 50);
+            ctx.font = "14px Arial"; ctx.fillStyle = "#bdc3c7"; ctx.fillText("저장 없이 나가시면", canvas.width / 2, py + 85); ctx.fillText("처음부터 시작하게 됩니다.", canvas.width / 2, py + 105);
+            drawButtonStyled("확인", canvas.width / 2 - 65, py + 150, "#e74c3c", 90, 35, "bold 16px Arial");
+            drawButtonStyled("취소", canvas.width / 2 + 65, py + 150, "#7f8c8d", 90, 35, "bold 16px Arial");
+} else if (popupType === "CONTINUE") {
+    const saved = localStorage.getItem("jumpGame_saveData");
+    const data = saved ? JSON.parse(saved) : null;
+    
+    // 높이를 220으로 확장
+    const pw = 300; const ph = 220;
+    const px = (canvas.width - pw) / 2;
+    const py = (canvas.height - ph) / 2;
+
+    // 배경 상자
+    ctx.fillStyle = "#2c3e50"; ctx.strokeStyle = "white"; ctx.lineWidth = 3;
+    ctx.fillRect(px, py, pw, ph); ctx.strokeRect(px, py, pw, ph);
+
+    ctx.textAlign = "center"; ctx.fillStyle = "white";
+    ctx.font = "bold 20px Arial"; ctx.fillText("저장된 기록이 있습니다", canvas.width / 2, py + 40);
+    
+    if (data) {
+        ctx.font = "12px Arial"; ctx.fillStyle = "#f1c40f";
+        ctx.fillText(`저장 시간: ${data.saveDate}`, canvas.width / 2, py + 75);
+    }
+    
+    ctx.font = "14px Arial"; ctx.fillStyle = "#bdc3c7"; 
+    ctx.fillText("게임을 어떻게 시작할까요?", canvas.width / 2, py + 105);
+    
+    // 버튼 배치 (Y값 160 고정)
+    const btnW = 85; const btnY = py + 160;
+    drawButtonStyled("이어하기", canvas.width / 2 - 95, btnY, "#27ae60", btnW, 40, "bold 14px Arial");
+    drawButtonStyled("새로하기", canvas.width / 2, btnY, "#e67e22", btnW, 40, "bold 14px Arial");
+    drawButtonStyled("취소", canvas.width / 2 + 95, btnY, "#7f8c8d", btnW, 40, "bold 14px Arial");
+
+    // 안내 문구 (버튼 아래쪽)
+    ctx.font = "11px Arial"; ctx.fillStyle = "#ff7675";
+    ctx.fillText("이어하기 및 새로하기 시 저장 데이터는 삭제됩니다.", canvas.width / 2, py + 200);
+}
+        else if (popupType === "SAVE_CONFIRM") {
+            const saved = localStorage.getItem("jumpGame_saveData");
+            const data = saved ? JSON.parse(saved) : null;
+            ctx.font = "bold 20px Arial"; ctx.fillText("저장하시겠습니까?", canvas.width / 2, py + 45);
+            ctx.font = "12px Arial";
+            if (data) {
+                ctx.fillStyle = "#f1c40f"; ctx.fillText(`저장 시간: ${data.saveDate}`, canvas.width / 2, py + 70);
+            } else {
+                ctx.fillStyle = "#7f8c8d"; ctx.fillText("저장 이력이 없습니다.", canvas.width / 2, py + 70);
+            }
+            const t1 = " 10"; const t2 = "이 필요합니다.";
+            const iconSpace = 20; const w1 = ctx.measureText(t1).width; const w2 = ctx.measureText(t2).width;
+            const totalW = iconSpace + w1 + w2;
+            let curX = (canvas.width - totalW) / 2; let textY = py + 100;
+            ctx.textAlign = "left"; drawCoinStyle(ctx, curX + 8, textY, 8); curX += iconSpace;
+            ctx.fillStyle = "#f1c40f"; ctx.fillText(t1, curX, textY); curX += w1;
+            ctx.fillStyle = "white"; ctx.fillText(t2, curX, textY);
+            drawButtonStyled("확인", canvas.width / 2 - 65, py + 150, "#27ae60", 90, 35, "bold 16px Arial");
+            drawButtonStyled("취소", canvas.width / 2 + 65, py + 150, "#7f8c8d", 90, 35, "bold 16px Arial");
+        }
+    }
+
+    const characterNames = { "1st Everys": ["Ayatsuno Yuni", "Sakihane Huya"], "2nd Universe": ["Shirayuki Hina", "Neneko Mashiro", "Akane Lize", "Arahashi Tabi"], "3rd Cliché": ["Tenko Shibuki", "Aokumo Rin", "Hanako Nana", "Yuzuha Riko"], "Hidden": ["Airi Kanna", "GangZi"] };
+
+function drawShopMenu() {
+        ctx.fillStyle = "#1a1a1a"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.save(); ctx.translate(0, -shopScrollY);
+        
+        ctx.font = "bold 35px Arial"; ctx.fillStyle = "#f1c40f"; ctx.textAlign = "center"; ctx.fillText("SHOP", canvas.width / 2, 70);
+        
+        const shopCoinX = canvas.width / 2 - 40; drawCoinStyle(ctx, shopCoinX, 100, 8);
+        ctx.font = "bold 18px Arial"; ctx.fillStyle = "white"; ctx.textAlign = "left"; ctx.fillText(`보유 코인: ${coins}`, shopCoinX + 15, 100);
+        
+        let sy = 160;
+
+        // --- [순서 변경: Hidden을 맨 위로] ---
+        drawShopSection("Hidden", sy, 2, "#7f8c8d"); sy += 200; // Hidden 섹션 (캐릭터 2개 높이만큼 이동)
+        
+        drawShopSection("1st Everys", sy, 2, "#BCA9E1"); sy += 200;
+        
+        drawShopSection("2nd Universe", sy, 4, "#3498db"); sy += 360; // 캐릭터 4개는 2줄이므로 높이를 더 많이 이동
+        
+        drawShopSection("3rd Cliché", sy, 4, "#e67e22"); sy += 360;
+
+        ctx.restore();
+        
+        // 하단 뒤로가기 버튼 영역
+        ctx.fillStyle = "rgba(20, 20, 20, 0.95)"; ctx.fillRect(0, 610, canvas.width, 90);
+        drawButtonStyled("뒤로가기", canvas.width / 2, 650, "#7f8c8d", 160, 50, "bold 20px Arial");
+    }
+
+function drawShopSection(title, y, count, color) {
+        ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.font = "bold 22px Arial"; ctx.fillStyle = color; ctx.fillText(title, canvas.width / 2, y);
+        const slotSize = 85; const spacing = 30; const startX = (canvas.width - ((slotSize * 2) + spacing)) / 2;
+        
+        for (let i = 0; i < count; i++) {
+            const r = Math.floor(i / 2); const c = i % 2;
+            const sx = startX + c * (slotSize + spacing); const sy = y + 25 + r * (slotSize + spacing + 25);
+            
+            // 슬롯 배경 및 테두리
+            ctx.fillStyle = "rgba(255, 255, 255, 0.05)"; ctx.fillRect(sx, sy, slotSize, slotSize);
+            ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.strokeRect(sx, sy, slotSize, slotSize);
+            
+            const realName = characterNames[title][i] || "Unknown";
+            const isUnlocked = unlockedHeroes.includes(realName); // 구매 여부 확인
+
+            // 1. 이미지 영역 그리기
+            if (isUnlocked) {
+                // 구매한 경우: 실제 캐릭터 이미지
+                drawHero(ctx, sx + 10, sy + 10, slotSize - 20, slotSize - 20, realName);
+            } else {
+                // 구매하지 않은 경우: 이미지 대신 큰 물음표
+                ctx.fillStyle = "rgba(255, 255, 255, 0.1)"; 
+                ctx.fillRect(sx + 5, sy + 5, slotSize - 10, slotSize - 10);
+                
+                ctx.fillStyle = "#7f8c8d"; // 미해금 상태를 나타내는 회색
+                ctx.font = "bold 40px Arial"; 
+                ctx.fillText("?", sx + slotSize/2, sy + slotSize/2);
+            }
+
+            // 2. 이름 영역 그리기 (구매 여부와 상관없이 이름은 출력)
+            ctx.fillStyle = isUnlocked ? "white" : "#bdc3c7"; // 구매 안 했으면 약간 흐린 색상으로
+            ctx.font = "bold 13px Arial"; 
+            ctx.fillText(realName, sx + slotSize/2, sy + slotSize + 20);
+        }
     }
 
     function update(dt) {
-        const timeAdj = dt * 60; 
-
-// 1. 발판 이동 및 캐릭터 동기화
-platforms.forEach(plat => {
-    if (plat.speed !== 0) {
-        const moveStep = plat.speed * timeAdj;
-        plat.x += moveStep;
-
-        // [끼임 방지 로직 추가]
-        if (plat.x <= 0) {
-            plat.x = 0;         // 왼쪽 벽에 붙이기
-            plat.speed *= -1;   // 방향 반전
-        } else if (plat.x + plat.width >= canvas.width) {
-            plat.x = canvas.width - plat.width; // 오른쪽 벽에 붙이기
-            plat.speed *= -1;   // 방향 반전
-        }
-
-        // 캐릭터가 이 발판 위에 있다면 같이 이동
-        if (!player.isJumping && player.standingOn === plat) {
-            player.x += moveStep;
-            
-            // 캐릭터도 벽 밖으로 나가지 않게 보정
-            if (player.x < 0) player.x = 0;
-            if (player.x + player.width > canvas.width) player.x = canvas.width - player.width;
-        }
-    }
-});
-
-        if (isCharging) {
-            power = Math.min(maxPower, power + 0.4 * timeAdj);
-        }
-
-        if (player.isJumping) {
-            player.x += player.vx * timeAdj;
-            player.y += player.vy * timeAdj;
-            player.vy += gravity * timeAdj;
-
-            if (player.x + player.width > canvas.width || player.x < 0) {
-                player.vx *= -0.7;
-                player.x = player.x < 0 ? 0 : canvas.width - player.width;
+        if (isPopupOpen) return; const timeAdj = dt * 60;
+        platforms.forEach(plat => {
+            if (plat.speed !== 0) {
+                const moveStep = plat.speed * timeAdj; plat.x += moveStep;
+                if (plat.x <= 0 || plat.x + plat.width >= canvas.width) plat.speed *= -1;
+                if (!player.isJumping && player.standingOn === plat) { player.x += moveStep; player.x = Math.max(0, Math.min(canvas.width - player.width, player.x)); }
             }
-
+            if (plat.hasCoin && !plat.coinCollected) {
+                const cx = plat.x + plat.width / 2; const cy = plat.y - 20;
+                if (Math.abs(cx - (player.x + 20)) < 30 && Math.abs(cy - (player.y + 20)) < 30) { plat.coinCollected = true; coins++; saveCoins(); playCoinSound(); }
+            }
+        });
+        if (isCharging) power = Math.min(maxPower, power + 0.4 * timeAdj);
+        if (player.isJumping) {
+            player.x += player.vx * timeAdj; player.y += player.vy * timeAdj; player.vy += gravity * timeAdj;
+            if (player.x + player.width > canvas.width || player.x < 0) { player.vx *= -0.7; player.x = player.x < 0 ? 0 : canvas.width - player.width; }
             if (player.vy > 0) {
                 platforms.forEach(plat => {
-                    if (player.x + player.width > plat.x && player.x < plat.x + plat.width &&
-                        player.y + player.height > plat.y && player.y + player.height < plat.y + plat.height + (player.vy * timeAdj)) {
-                        player.y = plat.y - player.height;
-                        land(plat);
+                    if (player.x + player.width > plat.x && player.x < plat.x + plat.width && player.y + player.height > plat.y && player.y + player.height < plat.y + plat.height + (player.vy * timeAdj)) {
+                        player.y = plat.y - player.height; player.vy = 0; player.vx = 0; player.isJumping = false; player.standingOn = plat;
+                        player.angle = Math.round(player.angle / (Math.PI / 2)) * (Math.PI / 2);
                     }
                 });
             }
-
-            if (player.y >= floorY) {
-                player.y = floorY;
-                land(null);
+            if (player.y >= floorY) { 
+                player.y = floorY; player.vy = 0; player.vx = 0; player.isJumping = false; player.standingOn = null; 
+                player.angle = Math.round(player.angle / (Math.PI / 2)) * (Math.PI / 2); // 바닥 착지 각도 수정
             }
         }
-
         let highestPlatform = platforms[platforms.length - 1];
-        if (player.y < highestPlatform.y + 500) {
-            for(let k = 1; k <= 10; k++) addPlatform(highestPlatform.index + k);
+        if (player.y < highestPlatform.y + 500) { for(let k = 1; k <= 10; k++) addPlatform(highestPlatform.index + k); }
+        cameraY += (Math.min(0, player.y - canvas.height * 0.7) - cameraY) * (cameraSmoothness * timeAdj);
+
+const curH = Math.max(0, Math.floor((floorY - player.y) / 10)); // 현재 높이 계산
+        if (curH > highScore) {
+            highScore = curH;
+            localStorage.setItem("jumpGame_highScore", highScore); // 실시간 저장
         }
-
-        // 발판 삭제 로직 (화면 10배 여유)
-        if (platforms.length > 200) {
-            platforms = platforms.filter(p => p.y < player.y + (canvas.height * 10));
-        }
-
-        const screenPositionTarget = canvas.height * 0.7;
-        let targetCameraY = Math.min(0, player.y - screenPositionTarget);
-        cameraY += (targetCameraY - cameraY) * (cameraSmoothness * timeAdj);
+        // ===========================================================================
     }
 
-    function playJumpSound() {
-        if (!audioCtx) return;
-        const osc = audioCtx.createOscillator();
-        const gain = audioCtx.createGain();
-        osc.type = 'triangle';
-        osc.frequency.setValueAtTime(150, audioCtx.currentTime);
-        osc.frequency.exponentialRampToValueAtTime(600, audioCtx.currentTime + 0.1);
-        gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
-        osc.connect(gain); gain.connect(audioCtx.destination);
-        osc.start(); osc.stop(audioCtx.currentTime + 0.1);
-    }
-
-    function resizeCanvas() {
-        const sw = window.innerWidth;
-        const sh = window.innerHeight;
-        canvas.style.width = sw > 500 ? "auto" : "100vw";
-        canvas.style.height = sw > 500 ? "90vh" : "100dvh";
-    }
-    window.addEventListener('resize', resizeCanvas);
-    resizeCanvas();
-
-    const startY = floorY;
     let highScore = parseInt(localStorage.getItem("jumpGame_highScore")) || 0;
-    let stars = [];
-    for(let i=0; i<100; i++) stars.push({ x: Math.random() * canvas.width, y: -Math.random() * 20000, size: Math.random() * 2 });
+    let stars = []; for(let i=0; i<100; i++) stars.push({ x: Math.random() * canvas.width, y: -Math.random() * 20000, size: Math.random() * 2 });
 
-    function draw(timestamp) {
-        let dt = (timestamp - lastTime) / 1000;
-        if (isNaN(dt)) dt = 0;
-        lastTime = timestamp;
-        if (dt > 0.1) dt = 0.1;
-
-        update(dt);
-
+    function renderGame(dt) {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
-        
-        let altitude = Math.min(1, Math.abs(cameraY) / 20000);
-        ctx.fillStyle = `rgb(${Math.floor(135-125*altitude)}, ${Math.floor(206-196*altitude)}, ${Math.floor(235-215*altitude)})`;
+        let alt = Math.min(1, Math.abs(cameraY) / 20000);
+        ctx.fillStyle = `rgb(${Math.floor(135-125*alt)}, ${Math.floor(206-196*alt)}, ${Math.floor(235-215*alt)})`;
         ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-        ctx.save();
-        ctx.translate(0, -cameraY);
-
-        ctx.fillStyle = "white";
-        stars.forEach(s => { ctx.beginPath(); ctx.arc(s.x, s.y, s.size, 0, Math.PI*2); ctx.fill(); });
-
-        const groundBase = floorY + 40;
-        ctx.fillStyle = "#8B4513"; ctx.fillRect(0, groundBase, canvas.width, 2000); 
-        ctx.fillStyle = "#228B22"; ctx.fillRect(0, groundBase, canvas.width, 40);
-
+        ctx.save(); ctx.translate(0, -cameraY);
+        stars.forEach(s => { ctx.fillStyle = "white"; ctx.beginPath(); ctx.arc(s.x, s.y, s.size, 0, Math.PI*2); ctx.fill(); });
+        ctx.fillStyle = "#8B4513"; ctx.fillRect(0, floorY + 40, canvas.width, 2000); ctx.fillStyle = "#228B22"; ctx.fillRect(0, floorY + 40, canvas.width, 40);
         platforms.forEach(plat => {
-            ctx.save();
-            ctx.beginPath(); ctx.rect(plat.x, plat.y, plat.width, plat.height); ctx.clip();
-            // 움직이는 발판은 색상을 다르게 표시 (선택 사항)
-           ctx.fillStyle = "#FFD700";
-            ctx.fillRect(plat.x, plat.y, plat.width, plat.height);
-            ctx.fillStyle = "#E6B800";
-            plat.holes.forEach(h => { ctx.beginPath(); ctx.arc(plat.x + h.x, plat.y + h.y, h.size, 0, Math.PI*2); ctx.fill(); });
+            ctx.save(); ctx.beginPath(); ctx.rect(plat.x, plat.y, plat.width, plat.height); ctx.clip();
+            ctx.fillStyle = "#FFD700"; ctx.fillRect(plat.x, plat.y, plat.width, plat.height);
+            ctx.fillStyle = "#E6B800"; plat.holes.forEach(h => { ctx.beginPath(); ctx.arc(plat.x + h.x, plat.y + h.y, h.size, 0, Math.PI*2); ctx.fill(); });
             ctx.restore();
+            if (plat.hasCoin && !plat.coinCollected) drawCoinStyle(ctx, plat.x + plat.width / 2, plat.y - 20, 10);
         });
 
-        ctx.save();
-        ctx.translate(player.x + player.width/2, player.y + player.height/2);
-        if (player.isJumping) player.angle += (player.vx > 0 ? 0.2 : -0.2) * (dt * 60);
-        ctx.rotate(player.angle);
-        draw8GridBlockyPlayer(ctx, -player.width/2, -player.height/2, player.width, player.height);
-        ctx.restore();
-
-        if (isCharging) {
-            ctx.fillStyle = "#ccc"; ctx.fillRect(player.x, player.y - 20, player.width, 10);
-            ctx.fillStyle = "#e74c3c"; ctx.fillRect(player.x, player.y - 20, (power/maxPower)*player.width, 10);
+        const curH = Math.max(0, Math.floor((floorY - player.y) / 10));
+        if (!player.isJumping && curH <= 500) {
+            ctx.fillStyle = "white"; ctx.font = "bold 16px Arial"; ctx.textAlign = "center";
+            let arrow = jumpDirection === 1 ? "다음 점프: 오른쪽 >" : "< 왼쪽 :다음 점프";
+            ctx.fillText(arrow, player.x + 20, player.y - 40);
         }
 
+        ctx.save(); ctx.translate(player.x + 20, player.y + 20);
+        if (player.isJumping) player.angle += (player.vx > 0 ? 0.2 : -0.2) * (dt * 60);
+        ctx.rotate(player.angle); drawHero(ctx, -20, -20, 40, 40, currentHero);
+        ctx.restore();
+        if (isCharging) { ctx.fillStyle = "#ccc"; ctx.fillRect(player.x, player.y - 20, 40, 10); ctx.fillStyle = "#e74c3c"; ctx.fillRect(player.x, player.y - 20, (power/maxPower)*40, 10); }
         ctx.restore();
 
-        const curH = Math.max(0, Math.floor((startY - player.y) / 10));
-        if (curH > highScore) { highScore = curH; localStorage.setItem("jumpGame_highScore", highScore); }
+        const uiCoinX = canvas.width / 2 - 20; drawCoinStyle(ctx, uiCoinX, 23, 8);
+        ctx.textAlign = "left"; ctx.font = "bold 20px Arial"; ctx.fillStyle = "black"; ctx.fillText(`${coins}`, uiCoinX + 16, 24);
+        ctx.fillStyle = "#f1c40f"; ctx.fillText(`${coins}`, uiCoinX + 15, 23);
 
-        ctx.font = "bold 16px Arial";
-        ctx.fillStyle = "black"; ctx.fillText(`최고: ${highScore}`, 21, 41); ctx.fillText(`높이: ${curH}`, 21, 71);
+        drawButtonStyled("나가기", canvas.width - 45, 32.5, "rgba(0, 0, 0, 0.5)", 70, 35, "bold 14px Arial");
+        drawButtonStyled("저장", canvas.width - 45, 77.5, "rgba(39, 174, 96, 0.7)", 70, 35, "bold 14px Arial");
+        ctx.strokeStyle = "white"; ctx.lineWidth = 2; ctx.strokeRect(canvas.width - 80, 15, 70, 35); ctx.strokeRect(canvas.width - 80, 60, 70, 35);
+
+        ctx.textAlign = "left"; ctx.font = "bold 16px Arial"; ctx.fillStyle = "black";
+        ctx.fillText(`최고: ${highScore}`, 21, 41); ctx.fillText(`높이: ${curH}`, 21, 71);
         ctx.fillStyle = "#f1c40f"; ctx.fillText(`최고: ${highScore}`, 20, 40);
         ctx.fillStyle = "white"; ctx.fillText(`높이: ${curH}`, 20, 70);
+        drawPopup();
+    }
 
-        if (curH < 500) {
-            ctx.font = "bold 16px Arial";
-            ctx.fillStyle = "white";
-	ctx.textAlign = "center";
-            ctx.fillText(jumpDirection === 1 ? "다음 점프 방향 >>" : "<< 다음 점프 방향", 201, 51);
-
-            ctx.fillStyle = "black";
-	ctx.textAlign = "center";
-            ctx.fillText(jumpDirection === 1 ? "다음 점프 방향 >>" : "<< 다음 점프 방향", 200, 50);
-
-ctx.textAlign = "left";
+    function draw(timestamp) {
+        let dt = (timestamp - lastTime) / 1000; if (isNaN(dt)) dt = 0; lastTime = timestamp;
+        if (gameState === 'PLAYING') { update(dt); renderGame(dt); }else if (gameState === 'LOBBY') {
+            ctx.fillStyle = "#1a1a1a"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.font = "bold 50px Arial"; ctx.fillStyle = "#BCA9E1"; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText("JUMBUKI", canvas.width / 2, 180);
+            drawButtonStyled("시작하기", canvas.width / 2, 320, "#27ae60", 160, 50, "bold 20px Arial");
+            drawButtonStyled("상점", canvas.width / 2, 390, "#f1c40f", 160, 50, "bold 20px Arial");
+            drawButtonStyled("설정", canvas.width / 2, 460, "#2980b9", 160, 50, "bold 20px Arial");
+            drawPopup();
+        } else if (gameState === 'SHOP') { drawShopMenu(); }
+        else if (gameState === 'SETTINGS') {
+            ctx.fillStyle = "#1a1a1a"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.textAlign = "center"; ctx.font = "bold 30px Arial"; ctx.fillStyle = "white"; ctx.fillText("설정", canvas.width / 2, 200);
+            drawButtonStyled("뒤로가기", canvas.width / 2, 500, "#7f8c8d", 160, 50, "bold 20px Arial");
         }
-
         requestAnimationFrame(draw);
     }
 
+    function resetGame() { player.x = canvas.width / 2 - 20; player.y = floorY; player.vx = 0; player.vy = 0; player.angle = 0; player.isJumping = false; player.standingOn = null; cameraY = 0; power = 0; isCharging = false; initPlatforms(); }
+
     initPlatforms();
     requestAnimationFrame(draw);
+
+    let touchStartY = 0;
+    window.addEventListener('wheel', (e) => { if (gameState === 'SHOP') { shopScrollY += e.deltaY * 0.5; shopScrollY = Math.max(0, Math.min(shopScrollY, shopContentHeight - canvas.height + 100)); } }, { passive: true });
+    canvas.addEventListener('touchmove', (e) => { if (gameState === 'SHOP') { e.preventDefault(); const touchY = e.touches[0].clientY; const deltaY = touchStartY - touchY; touchStartY = touchY; shopScrollY += deltaY * 1.5; shopScrollY = Math.max(0, Math.min(shopScrollY, shopContentHeight - canvas.height + 100)); } }, { passive: false });
+
+// --- [테스트 기능: 1번 상승, 2번 코인 추가] ---
+window.addEventListener('keydown', (e) => {
+    // 1번 키: 캐릭터 상승
+    if (e.key === '1') {
+        player.isJumping = true;
+        player.vy = -5;
+        player.vx = 0;
+        player.standingOn = null;
+    }
+
+    // 키를 뗐을 때 바로 멈추고 싶다면 아래 코드를 추가하세요 (선택 사항)
+window.addEventListener('keyup', (e) => {
+    if (e.key === '1') {
+        player.vy = 0; // 상승 중지 (이후 중력에 의해 낙하)
+    }
+
+    // 2번 키: 코인 10개 즉시 지급
+    if (e.key === '2') {
+        coins += 10;
+        saveCoins();      // 로컬 스토리지에 저장
+        playCoinSound();  // 지급될 때 띠링~ 소리 효과
+    }
+});
+
+
+});
 </script>
 </body>
 </html>
