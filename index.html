@@ -553,66 +553,120 @@ function drawHero(ctx, x, y, width, height, heroName) {
 
     // --- [입력 핸들러] ---
 function handleInputStart(x, y) {
-        if (isPopupOpen) {
-            const pw = 300;
-            // CONTINUE 팝업은 높이가 200, 나머지는 180입니다.
-            const ph = (popupType === "CONTINUE") ? 200 : 180;
-            const px = (canvas.width - pw) / 2;
-            const py = (canvas.height - ph) / 2;
+    // 1. 팝업이 열려있을 때의 로직
+    if (isPopupOpen) {
+        const pw = 300;
+        const ph = (popupType === "CONTINUE") ? 200 : 180;
+        const px = (canvas.width - pw) / 2;
+        const py = (canvas.height - ph) / 2;
 
-if (popupType === "CONTINUE") {
-    // 팝업 높이가 200이므로 py를 그에 맞춰 계산
-    const ph_cont = 200;
-    const py_cont = (canvas.height - ph_cont) / 2;
-    const btnY = py_cont + 160; // 버튼의 Y축 중심점
-    const btnW = 85;
-    const btnH = 40; // 버튼의 높이 절반은 20
-
-    // 1. 이어하기 (좌측: canvas.width / 2 - 95)
-    if (x > canvas.width / 2 - 95 - btnW/2 && x < canvas.width / 2 - 95 + btnW/2 && y > btnY - 20 && y < btnY + 20) {
-        isPopupOpen = false; loadGameProgress(); gameState = 'PLAYING'; initAudio();
-    }
-    // 2. 새로하기 (중앙: canvas.width / 2)
-    else if (x > canvas.width / 2 - btnW/2 && x < canvas.width / 2 + btnW/2 && y > btnY - 20 && y < btnY + 20) {
-        isPopupOpen = false; localStorage.removeItem("jumpGame_saveData"); resetGame(); gameState = 'PLAYING'; initAudio();
-    }
-    // 3. 취소 (우측: canvas.width / 2 + 95)
-    else if (x > canvas.width / 2 + 95 - btnW/2 && x < canvas.width / 2 + 95 + btnW/2 && y > btnY - 20 && y < btnY + 20) {
-        isPopupOpen = false;
-    }
-            } else {
-                // EXIT 및 SAVE_CONFIRM 기존 로직
-                const btnY = py + 150;
-                if (x > canvas.width / 2 - 110 && x < canvas.width / 2 - 20 && y > btnY - 20 && y < btnY + 20) {
-                    if (popupType === "EXIT") { isPopupOpen = false; gameState = 'LOBBY'; resetGame(); }
-                    else if (popupType === "SAVE_CONFIRM" && coins >= 10) { executeSave(); }
-                }
-                if (x > canvas.width / 2 + 20 && x < canvas.width / 2 + 110 && y > btnY - 20 && y < btnY + 20) {
-                    isPopupOpen = false;
-                }
+        if (popupType === "CONTINUE") {
+            const btnY = py + 160;
+            const btnW = 85;
+            if (x > canvas.width / 2 - 95 - btnW/2 && x < canvas.width / 2 - 95 + btnW/2 && y > btnY - 20 && y < btnY + 20) {
+                isPopupOpen = false; loadGameProgress(); gameState = 'PLAYING'; initAudio();
+            } else if (x > canvas.width / 2 - btnW/2 && x < canvas.width / 2 + btnW/2 && y > btnY - 20 && y < btnY + 20) {
+                isPopupOpen = false; localStorage.removeItem("jumpGame_saveData"); resetGame(); gameState = 'PLAYING'; initAudio();
+            } else if (x > canvas.width / 2 + 95 - btnW/2 && x < canvas.width / 2 + 95 + btnW/2 && y > btnY - 20 && y < btnY + 20) {
+                isPopupOpen = false;
             }
-            return;
+        } else {
+            const btnY = py + 150;
+            if (x > canvas.width / 2 - 110 && x < canvas.width / 2 - 20 && y > btnY - 20 && y < btnY + 20) {
+                if (popupType === "EXIT") { isPopupOpen = false; gameState = 'LOBBY'; resetGame(); }
+                else if (popupType === "SAVE_CONFIRM" && coins >= 10) { executeSave(); }
+                else if (popupType === "DATA_RESET") { localStorage.clear(); location.reload(); }
+            }
+            if (x > canvas.width / 2 + 20 && x < canvas.width / 2 + 110 && y > btnY - 20 && y < btnY + 20) {
+                isPopupOpen = false;
+            }
+        }
+        return; 
+    }
+
+    // 2. 각 게임 상태별 로직
+    if (gameState === 'LOBBY') {
+        if (x > 120 && x < 280) {
+            if (y > 295 && y < 345) { 
+                if (localStorage.getItem("jumpGame_saveData")) { popupType = "CONTINUE"; isPopupOpen = true; } 
+                else { gameState = 'PLAYING'; initAudio(); resetGame(); }
+            }
+            else if (y > 365 && y < 415) { gameState = 'SHOP'; shopScrollY = 0; }
+            else if (y > 435 && y < 485) { popupType = "DATA_RESET"; isPopupOpen = true; }
+        }
+    } 
+    else if (gameState === 'PLAYING') {
+        if (x > 310 && x < 395 && y > 15 && y < 50) { popupType = "EXIT"; isPopupOpen = true; }
+        else if (x > 310 && x < 395 && y > 60 && y < 95) { popupType = "SAVE_CONFIRM"; isPopupOpen = true; }
+        else { if (!player.isJumping) { initAudio(); isCharging = true; power = 0; } }
+    } 
+else if (gameState === 'SHOP') {
+        // [A] 뒤로가기 버튼
+        if (x > 120 && x < 280 && y > 620 && y < 680) { 
+            gameState = 'LOBBY'; 
+            return; 
         }
 
-        if (gameState === 'LOBBY') {
-            if (x > 120 && x < 280) {
-                if (y > 295 && y < 345) { 
-                    if (localStorage.getItem("jumpGame_saveData")) { popupType = "CONTINUE"; isPopupOpen = true; } 
-                    else { gameState = 'PLAYING'; initAudio(); resetGame(); }
+        // [B] 캐릭터 슬롯 클릭 판정
+        const slotSize = 85;
+        const spacing = 30;
+        let currentY = 180 - shopScrollY; // 안내 문구가 추가되어 180으로 시작 지점 조정
+
+        const sections = [
+            { id: "CEO", count: 1, height: 150 },
+            { id: "1st Everys", count: 2, height: 200 },
+            { id: "2nd Universe", count: 4, height: 360 },
+            { id: "3rd Cliché", count: 4, height: 360 }
+        ];
+
+        for (const section of sections) {
+            for (let i = 0; i < section.count; i++) {
+                const row = Math.floor(i / 2);
+                const col = i % 2;
+
+                // --- [수정된 X축 클릭 좌표 계산] ---
+                let slotX;
+                if (section.count === 1) {
+                    // 캐릭터가 한 명일 때: 중앙 좌표 계산
+                    slotX = (canvas.width - slotSize) / 2;
+                } else {
+                    // 캐릭터가 여러 명일 때: 기존 2열 좌표 계산
+                    const startX = (canvas.width - ((slotSize * 2) + spacing)) / 2;
+                    slotX = startX + col * (slotSize + spacing);
                 }
-                else if (y > 365 && y < 415) { gameState = 'SHOP'; shopScrollY = 0; }
-                else if (y > 435 && y < 485) { gameState = 'SETTINGS'; }
+                // ----------------------------------
+
+                const slotY = currentY + 25 + row * (slotSize + spacing + 25);
+
+                if (x > slotX && x < slotX + slotSize && y > slotY && y < slotY + slotSize) {
+                    const name = characterNames[section.id][i];
+                    if (!name) continue;
+
+                    if (unlockedHeroes.includes(name)) {
+                        currentHero = name;
+                        playJumpSound();
+                    } else {
+                        if (coins >= 10) {
+                            coins -= 10;
+                            unlockedHeroes.push(name);
+                            saveCoins();
+                            saveUnlockedHeroes();
+                            currentHero = name;
+                            playCoinSound();
+                        } else {
+                            console.log("코인이 부족합니다.");
+                        }
+                    }
+                    return; 
+                }
             }
-        } else if (gameState === 'PLAYING') {
-            if (x > 310 && x < 395 && y > 15 && y < 50) { popupType = "EXIT"; isPopupOpen = true; }
-            else if (x > 310 && x < 395 && y > 60 && y < 95) { popupType = "SAVE_CONFIRM"; isPopupOpen = true; }
-            else { if (!player.isJumping) { initAudio(); isCharging = true; power = 0; } }
-        } else if (gameState === 'SHOP') {
-            if (x > 120 && x < 280 && y > 620 && y < 680) { gameState = 'LOBBY'; }
-        } else if (gameState === 'SETTINGS') {
-            if (x > 120 && x < 280 && y > 475 && y < 525) { gameState = 'LOBBY'; }
+            currentY += section.height;
         }
     }
+    else if (gameState === 'SETTINGS') {
+        if (x > 120 && x < 280 && y > 475 && y < 525) { gameState = 'LOBBY'; }
+    }
+}
 
     let audioCtx = null;
     function initAudio() { if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)(); if (audioCtx.state === 'suspended') audioCtx.resume(); }
@@ -644,7 +698,7 @@ function drawPopup() {
         ctx.fillStyle = "rgba(0, 0, 0, 0.7)"; ctx.fillRect(0, 0, canvas.width, canvas.height);
         
         const pw = 300; 
-        const ph = (popupType === "CONTINUE") ? 200 : 180;
+        const ph = (popupType === "CONTINUE") ? 220 : 180; // CONTINUE만 좀 더 크게
         const px = (canvas.width - pw) / 2; 
         const py = (canvas.height - ph) / 2;
         
@@ -657,50 +711,32 @@ function drawPopup() {
             ctx.font = "14px Arial"; ctx.fillStyle = "#bdc3c7"; ctx.fillText("저장 없이 나가시면", canvas.width / 2, py + 85); ctx.fillText("처음부터 시작하게 됩니다.", canvas.width / 2, py + 105);
             drawButtonStyled("확인", canvas.width / 2 - 65, py + 150, "#e74c3c", 90, 35, "bold 16px Arial");
             drawButtonStyled("취소", canvas.width / 2 + 65, py + 150, "#7f8c8d", 90, 35, "bold 16px Arial");
-} else if (popupType === "CONTINUE") {
-    const saved = localStorage.getItem("jumpGame_saveData");
-    const data = saved ? JSON.parse(saved) : null;
-    
-    // 높이를 220으로 확장
-    const pw = 300; const ph = 220;
-    const px = (canvas.width - pw) / 2;
-    const py = (canvas.height - ph) / 2;
-
-    // 배경 상자
-    ctx.fillStyle = "#2c3e50"; ctx.strokeStyle = "white"; ctx.lineWidth = 3;
-    ctx.fillRect(px, py, pw, ph); ctx.strokeRect(px, py, pw, ph);
-
-    ctx.textAlign = "center"; ctx.fillStyle = "white";
-    ctx.font = "bold 20px Arial"; ctx.fillText("저장된 기록이 있습니다", canvas.width / 2, py + 40);
-    
-    if (data) {
-        ctx.font = "12px Arial"; ctx.fillStyle = "#f1c40f";
-        ctx.fillText(`저장 시간: ${data.saveDate}`, canvas.width / 2, py + 75);
-    }
-    
-    ctx.font = "14px Arial"; ctx.fillStyle = "#bdc3c7"; 
-    ctx.fillText("게임을 어떻게 시작할까요?", canvas.width / 2, py + 105);
-    
-    // 버튼 배치 (Y값 160 고정)
-    const btnW = 85; const btnY = py + 160;
-    drawButtonStyled("이어하기", canvas.width / 2 - 95, btnY, "#27ae60", btnW, 40, "bold 14px Arial");
-    drawButtonStyled("새로하기", canvas.width / 2, btnY, "#e67e22", btnW, 40, "bold 14px Arial");
-    drawButtonStyled("취소", canvas.width / 2 + 95, btnY, "#7f8c8d", btnW, 40, "bold 14px Arial");
-
-    // 안내 문구 (버튼 아래쪽)
-    ctx.font = "11px Arial"; ctx.fillStyle = "#ff7675";
-    ctx.fillText("이어하기 및 새로하기 시 저장 데이터는 삭제됩니다.", canvas.width / 2, py + 200);
-}
+        } 
+        else if (popupType === "CONTINUE") {
+            const saved = localStorage.getItem("jumpGame_saveData");
+            const data = saved ? JSON.parse(saved) : null;
+            ctx.font = "bold 20px Arial"; ctx.fillText("저장된 기록이 있습니다", canvas.width / 2, py + 40);
+            if (data) {
+                ctx.font = "12px Arial"; ctx.fillStyle = "#f1c40f";
+                ctx.fillText(`저장 시간: ${data.saveDate}`, canvas.width / 2, py + 75);
+            }
+            ctx.font = "14px Arial"; ctx.fillStyle = "#bdc3c7"; 
+            ctx.fillText("게임을 어떻게 시작할까요?", canvas.width / 2, py + 105);
+            const btnW = 85; const btnY = py + 160;
+            drawButtonStyled("이어하기", canvas.width / 2 - 95, btnY, "#27ae60", btnW, 40, "bold 14px Arial");
+            drawButtonStyled("새로하기", canvas.width / 2, btnY, "#e67e22", btnW, 40, "bold 14px Arial");
+            drawButtonStyled("취소", canvas.width / 2 + 95, btnY, "#7f8c8d", btnW, 40, "bold 14px Arial");
+            ctx.font = "11px Arial"; ctx.fillStyle = "#ff7675";
+            ctx.fillText("이어하기 및 새로하기 시 저장 데이터는 삭제됩니다.", canvas.width / 2, py + 200);
+        }
         else if (popupType === "SAVE_CONFIRM") {
             const saved = localStorage.getItem("jumpGame_saveData");
             const data = saved ? JSON.parse(saved) : null;
             ctx.font = "bold 20px Arial"; ctx.fillText("저장하시겠습니까?", canvas.width / 2, py + 45);
             ctx.font = "12px Arial";
-            if (data) {
-                ctx.fillStyle = "#f1c40f"; ctx.fillText(`저장 시간: ${data.saveDate}`, canvas.width / 2, py + 70);
-            } else {
-                ctx.fillStyle = "#7f8c8d"; ctx.fillText("저장 이력이 없습니다.", canvas.width / 2, py + 70);
-            }
+            if (data) { ctx.fillStyle = "#f1c40f"; ctx.fillText(`저장 시간: ${data.saveDate}`, canvas.width / 2, py + 70); } 
+            else { ctx.fillStyle = "#7f8c8d"; ctx.fillText("저장 이력이 없습니다.", canvas.width / 2, py + 70); }
+            
             const t1 = " 10"; const t2 = "이 필요합니다.";
             const iconSpace = 20; const w1 = ctx.measureText(t1).width; const w2 = ctx.measureText(t2).width;
             const totalW = iconSpace + w1 + w2;
@@ -711,36 +747,78 @@ function drawPopup() {
             drawButtonStyled("확인", canvas.width / 2 - 65, py + 150, "#27ae60", 90, 35, "bold 16px Arial");
             drawButtonStyled("취소", canvas.width / 2 + 65, py + 150, "#7f8c8d", 90, 35, "bold 16px Arial");
         }
+        // --- [DATA_RESET 팝업 그리기 추가] ---
+        else if (popupType === "DATA_RESET") {
+            ctx.font = "bold 20px Arial"; ctx.fillStyle = "#ff7675";
+            ctx.fillText("전체 데이터 초기화", canvas.width / 2, py + 50);
+            ctx.font = "14px Arial"; ctx.fillStyle = "#bdc3c7";
+            ctx.fillText("코인, 캐릭터, 최고 기록이", canvas.width / 2, py + 85);
+            ctx.fillText("모두 영구 삭제됩니다.", canvas.width / 2, py + 105);
+            drawButtonStyled("삭제", canvas.width / 2 - 65, py + 150, "#e74c3c", 90, 35, "bold 16px Arial");
+            drawButtonStyled("취소", canvas.width / 2 + 65, py + 150, "#7f8c8d", 90, 35, "bold 16px Arial");
+        }
     }
 
-    const characterNames = { "1st Everys": ["Ayatsuno Yuni", "Sakihane Huya"], "2nd Universe": ["Shirayuki Hina", "Neneko Mashiro", "Akane Lize", "Arahashi Tabi"], "3rd Cliché": ["Tenko Shibuki", "Aokumo Rin", "Hanako Nana", "Yuzuha Riko"], "Hidden": ["Airi Kanna", "GangZi"] };
+// 캐릭터 이름 정의 수정
+const characterNames = { 
+    "CEO": ["GangZi"], // Hidden 삭제, Airi Kanna 삭제, GangZi만 남김
+    "1st Everys": ["Ayatsuno Yuni", "Sakihane Huya"], 
+    "2nd Universe": ["Shirayuki Hina", "Neneko Mashiro", "Akane Lize", "Arahashi Tabi"], 
+    "3rd Cliché": ["Tenko Shibuki", "Aokumo Rin", "Hanako Nana", "Yuzuha Riko"] 
+};
 
 function drawShopMenu() {
-        ctx.fillStyle = "#1a1a1a"; ctx.fillRect(0, 0, canvas.width, canvas.height);
-        ctx.save(); ctx.translate(0, -shopScrollY);
-        
-        ctx.font = "bold 35px Arial"; ctx.fillStyle = "#f1c40f"; ctx.textAlign = "center"; ctx.fillText("SHOP", canvas.width / 2, 70);
-        
-        const shopCoinX = canvas.width / 2 - 40; drawCoinStyle(ctx, shopCoinX, 100, 8);
-        ctx.font = "bold 18px Arial"; ctx.fillStyle = "white"; ctx.textAlign = "left"; ctx.fillText(`보유 코인: ${coins}`, shopCoinX + 15, 100);
-        
-        let sy = 160;
+    ctx.fillStyle = "#1a1a1a"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.save(); ctx.translate(0, -shopScrollY);
+    
+    ctx.font = "bold 35px Arial"; ctx.fillStyle = "#f1c40f"; ctx.textAlign = "center"; ctx.fillText("SHOP", canvas.width / 2, 70);
+    
+    const shopCoinX = canvas.width / 2 - 40; drawCoinStyle(ctx, shopCoinX, 100, 8);
+    ctx.font = "bold 18px Arial"; ctx.fillStyle = "white"; ctx.textAlign = "left"; ctx.fillText(`보유 코인: ${coins}`, shopCoinX + 15, 100);
 
-        // --- [순서 변경: Hidden을 맨 위로] ---
-        drawShopSection("Hidden", sy, 2, "#7f8c8d"); sy += 200; // Hidden 섹션 (캐릭터 2개 높이만큼 이동)
-        
-        drawShopSection("1st Everys", sy, 2, "#BCA9E1"); sy += 200;
-        
-        drawShopSection("2nd Universe", sy, 4, "#3498db"); sy += 360; // 캐릭터 4개는 2줄이므로 높이를 더 많이 이동
-        
-        drawShopSection("3rd Cliché", sy, 4, "#e67e22"); sy += 360;
+// 2. 캐릭터 가격 안내 문구 추가 (새로 추가할 부분)
+    const priceText1 = "캐릭터는 10";
+    const priceText2 = " 입니다.";
+    ctx.font = "14px Arial";
+    ctx.fillStyle = "#bdc3c7";
+    ctx.textAlign = "center";
 
-        ctx.restore();
-        
-        // 하단 뒤로가기 버튼 영역
-        ctx.fillStyle = "rgba(20, 20, 20, 0.95)"; ctx.fillRect(0, 610, canvas.width, 90);
-        drawButtonStyled("뒤로가기", canvas.width / 2, 650, "#7f8c8d", 160, 50, "bold 20px Arial");
-    }
+    // 문구 전체의 너비를 계산하여 중앙 정렬
+    const t1W = ctx.measureText(priceText1).width;
+    const t2W = ctx.measureText(priceText2).width;
+    const coinSpace = 20; // 코인 아이콘이 차지할 공간
+    const totalW = t1W + coinSpace + t2W;
+    
+    let startX = (canvas.width - totalW) / 2;
+    let textY = 130; // 보유 코인(100)보다 조금 아래에 배치
+
+    // "캐릭터는 10" 그리기
+    ctx.textAlign = "left";
+    ctx.fillText(priceText1, startX, textY);
+    
+    // 코인 아이콘 그리기
+    drawCoinStyle(ctx, startX + t1W + 10, textY - 4, 7); 
+    
+    // " 입니다." 그리기
+    ctx.fillText(priceText2, startX + t1W + coinSpace, textY);
+    
+    let sy = 160;
+
+    // CEO 섹션 (캐릭터 1개이므로 높이를 150으로 조절 가능)
+    drawShopSection("CEO", sy, 1, "#7f8c8d"); sy += 150; 
+    
+    drawShopSection("1st Everys", sy, 2, "#BCA9E1"); sy += 200;
+    
+    drawShopSection("2nd Universe", sy, 4, "#3498db"); sy += 360; 
+    
+    drawShopSection("3rd Cliché", sy, 4, "#e67e22"); sy += 360;
+
+    ctx.restore();
+    
+    // 하단 뒤로가기 버튼 영역
+    ctx.fillStyle = "rgba(20, 20, 20, 0.95)"; ctx.fillRect(0, 610, canvas.width, 90);
+    drawButtonStyled("뒤로가기", canvas.width / 2, 650, "#7f8c8d", 160, 50, "bold 20px Arial");
+}
 
 function drawShopSection(title, y, count, color) {
         ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.font = "bold 22px Arial"; ctx.fillStyle = color; ctx.fillText(title, canvas.width / 2, y);
@@ -748,14 +826,34 @@ function drawShopSection(title, y, count, color) {
         
         for (let i = 0; i < count; i++) {
             const r = Math.floor(i / 2); const c = i % 2;
-            const sx = startX + c * (slotSize + spacing); const sy = y + 25 + r * (slotSize + spacing + 25);
+let sx;
+        if (count === 1) {
+            // 1. 캐릭터가 딱 한 명일 때: 캔버스 중앙에 배치
+            sx = (canvas.width - slotSize) / 2;
+        } else {
+            // 2. 캐릭터가 여러 명일 때: 기존의 2열 배치 사용
+            const startX = (canvas.width - ((slotSize * 2) + spacing)) / 2;
+            sx = startX + c * (slotSize + spacing);
+        }
+
+const sy = y + 25 + r * (slotSize + spacing + 25);
             
             // 슬롯 배경 및 테두리
             ctx.fillStyle = "rgba(255, 255, 255, 0.05)"; ctx.fillRect(sx, sy, slotSize, slotSize);
             ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.strokeRect(sx, sy, slotSize, slotSize);
             
-            const realName = characterNames[title][i] || "Unknown";
-            const isUnlocked = unlockedHeroes.includes(realName); // 구매 여부 확인
+const realName = characterNames[title][i] || "Unknown";
+            const isUnlocked = unlockedHeroes.includes(realName);
+            const isSelected = (currentHero === realName); // 현재 선택 여부
+
+            // 슬롯 배경
+            ctx.fillStyle = isSelected ? "rgba(241, 196, 15, 0.2)" : "rgba(255, 255, 255, 0.05)";
+            ctx.fillRect(sx, sy, slotSize, slotSize);
+            
+            // 테두리 (선택 시 금색, 해금 시 섹션색, 미해금 시 점선 등)
+            ctx.strokeStyle = isSelected ? "#f1c40f" : color;
+            ctx.lineWidth = isSelected ? 4 : 2;
+            ctx.strokeRect(sx, sy, slotSize, slotSize);
 
             // 1. 이미지 영역 그리기
             if (isUnlocked) {
@@ -875,7 +973,7 @@ const curH = Math.max(0, Math.floor((floorY - player.y) / 10)); // 현재 높이
             ctx.font = "bold 50px Arial"; ctx.fillStyle = "#BCA9E1"; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText("JUMBUKI", canvas.width / 2, 180);
             drawButtonStyled("시작하기", canvas.width / 2, 320, "#27ae60", 160, 50, "bold 20px Arial");
             drawButtonStyled("상점", canvas.width / 2, 390, "#f1c40f", 160, 50, "bold 20px Arial");
-            drawButtonStyled("설정", canvas.width / 2, 460, "#2980b9", 160, 50, "bold 20px Arial");
+            drawButtonStyled("데이터 삭제", canvas.width / 2, 460, "#FF4B4B", 160, 50, "bold 20px Arial");
             drawPopup();
         } else if (gameState === 'SHOP') { drawShopMenu(); }
         else if (gameState === 'SETTINGS') {
