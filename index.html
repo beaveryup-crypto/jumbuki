@@ -14,6 +14,8 @@
 
 <script>
 
+let isProcessingClick = false; // 클릭 중복 방지 플래그
+
 const canvas = document.getElementById('gameCanvas');
     const ctx = canvas.getContext('2d');
 
@@ -553,6 +555,13 @@ function drawHero(ctx, x, y, width, height, heroName) {
 
     // --- [입력 핸들러] ---
 function handleInputStart(x, y) {
+// 이미 클릭 처리 중이면 무시
+    if (isProcessingClick) return;
+    
+    // 클릭 처리 시작 (플래그 잠금)
+    isProcessingClick = true;
+    setTimeout(() => { isProcessingClick = false; }, 200); // 0.2초 후 잠금 해제
+
     // 1. 팝업이 열려있을 때의 로직
     if (isPopupOpen) {
         const pw = 300;
@@ -601,68 +610,77 @@ function handleInputStart(x, y) {
         else { if (!player.isJumping) { initAudio(); isCharging = true; power = 0; } }
     } 
 else if (gameState === 'SHOP') {
-        // [A] 뒤로가기 버튼
-        if (x > 120 && x < 280 && y > 620 && y < 680) { 
-            gameState = 'LOBBY'; 
-            return; 
-        }
+    if (x > 120 && x < 280 && y > 620 && y < 680) { 
+        gameState = 'LOBBY'; 
+        return; 
+    }
 
-        // [B] 캐릭터 슬롯 클릭 판정
-        const slotSize = 85;
-        const spacing = 30;
-        let currentY = 180 - shopScrollY; // 안내 문구가 추가되어 180으로 시작 지점 조정
+    const slotSize = 85;
+    const spacing = 30;
+    let currentY = 160 - shopScrollY; // 시작 sy값인 160으로 맞춤
 
-        const sections = [
-            { id: "CEO", count: 1, height: 150 },
-            { id: "1st Everys", count: 2, height: 200 },
-            { id: "2nd Universe", count: 4, height: 360 },
-            { id: "3rd Cliché", count: 4, height: 360 }
-        ];
+    // 각 섹션의 데이터 정의 (그리기 로직과 일치시킴)
+    const sections = [
+        { id: "CEO", count: 1, height: 200 },       // 높이 200으로 변경
+        { id: "1st Everys", count: 2, height: 200 },
+        { id: "2nd Universe", count: 4, height: 360 },
+        { id: "3rd Cliché", count: 4, height: 360 }
+    ];
 
-        for (const section of sections) {
-            for (let i = 0; i < section.count; i++) {
-                const row = Math.floor(i / 2);
-                const col = i % 2;
+    for (const section of sections) {
+        for (let i = 0; i < section.count; i++) {
+            const row = Math.floor(i / 2);
+            const col = i % 2;
 
-                // --- [수정된 X축 클릭 좌표 계산] ---
-                let slotX;
-                if (section.count === 1) {
-                    // 캐릭터가 한 명일 때: 중앙 좌표 계산
-                    slotX = (canvas.width - slotSize) / 2;
-                } else {
-                    // 캐릭터가 여러 명일 때: 기존 2열 좌표 계산
-                    const startX = (canvas.width - ((slotSize * 2) + spacing)) / 2;
-                    slotX = startX + col * (slotSize + spacing);
-                }
-                // ----------------------------------
-
-                const slotY = currentY + 25 + row * (slotSize + spacing + 25);
-
-                if (x > slotX && x < slotX + slotSize && y > slotY && y < slotY + slotSize) {
-                    const name = characterNames[section.id][i];
-                    if (!name) continue;
-
-                    if (unlockedHeroes.includes(name)) {
-                        currentHero = name;
-                        playJumpSound();
-                    } else {
-                        if (coins >= 10) {
-                            coins -= 10;
-                            unlockedHeroes.push(name);
-                            saveCoins();
-                            saveUnlockedHeroes();
-                            currentHero = name;
-                            playCoinSound();
-                        } else {
-                            console.log("코인이 부족합니다.");
-                        }
-                    }
-                    return; 
-                }
+            let slotX;
+            if (section.count === 1) {
+                // 중앙 정렬 클릭 판정
+                slotX = (canvas.width - slotSize) / 2;
+            } else {
+                // 2열 정렬 클릭 판정
+                const startX = (canvas.width - ((slotSize * 2) + spacing)) / 2;
+                slotX = startX + col * (slotSize + spacing);
             }
-            currentY += section.height;
+
+            const slotY = currentY + 25 + row * (slotSize + spacing + 25);
+
+            // 클릭 감지 (이름표 영역까지 포함하기 위해 아래쪽 범위를 살짝 늘림)
+            if (x > slotX && x < slotX + slotSize && y > slotY && y < slotY + slotSize + 25) {
+                const name = characterNames[section.id][i];
+                if (!name) continue;
+
+                if (unlockedHeroes.includes(name)) {
+                    currentHero = name;
+                    playJumpSound();
+                } else {
+// --- [CEO 해금 조건 추가] ---
+    if (section.id === "CEO") {
+        if (highScore >= 3000) {
+            unlockedHeroes.push(name);
+            saveUnlockedHeroes();
+            currentHero = name;
+        } 
+    } else {
+        // 일반 캐릭터는 기존처럼 코인 10개 소모
+        if (coins >= 10) {
+            coins -= 10;
+            unlockedHeroes.push(name);
+            saveCoins();
+            saveUnlockedHeroes();
+            currentHero = name;
+            playCoinSound();
+        } else {
+            console.log("코인이 부족합니다.");
         }
     }
+    // --------------------------
+}
+                return; 
+            }
+        }
+        currentY += section.height; // 다음 섹션 시작 위치 이동
+    }
+}
     else if (gameState === 'SETTINGS') {
         if (x > 120 && x < 280 && y > 475 && y < 525) { gameState = 'LOBBY'; }
     }
@@ -674,7 +692,25 @@ else if (gameState === 'SHOP') {
     function playCoinSound() { if (!audioCtx) return; const osc = audioCtx.createOscillator(); const gain = audioCtx.createGain(); osc.type = 'sine'; osc.frequency.setValueAtTime(900, audioCtx.currentTime); osc.frequency.exponentialRampToValueAtTime(1200, audioCtx.currentTime + 0.1); gain.gain.setValueAtTime(0.1, audioCtx.currentTime); gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.2); osc.connect(gain); gain.connect(audioCtx.destination); osc.start(); osc.stop(audioCtx.currentTime + 0.2); }
 
     window.addEventListener('mousedown', (e) => { const pos = getCanvasTouchPos(e); handleInputStart(pos.x, pos.y); });
-    canvas.addEventListener('touchstart', (e) => { const pos = getCanvasTouchPos(e); if (gameState === 'SHOP') touchStartY = e.touches[0].clientY; handleInputStart(pos.x, pos.y); }, { passive: false });
+    
+canvas.addEventListener('touchstart', (e) => {
+    // 1. 팝업이 떠 있거나 상점 상태일 때는 터치 동작이 
+    // 마우스 클릭으로 중복 인식되지 않도록 브라우저 기본 동작을 차단합니다.
+    if (isPopupOpen || gameState === 'SHOP' || gameState === 'LOBBY') {
+        e.preventDefault(); 
+    }
+
+    const pos = getCanvasTouchPos(e);
+    
+    // 2. 상점 스크롤 시작 위치 저장 (기존 로직)
+    if (gameState === 'SHOP') {
+        touchStartY = e.touches[0].clientY;
+    }
+    
+    // 3. 클릭 핸들러 실행
+    handleInputStart(pos.x, pos.y);
+}, { passive: false });
+
     window.addEventListener('mouseup', () => { if (isCharging) { jump(); isCharging = false; } });
     canvas.addEventListener('touchend', (e) => { if (gameState === 'PLAYING' && isCharging) { e.preventDefault(); jump(); isCharging = false; } }, { passive: false });
 
@@ -774,7 +810,7 @@ function drawShopMenu() {
     ctx.font = "bold 35px Arial"; ctx.fillStyle = "#f1c40f"; ctx.textAlign = "center"; ctx.fillText("SHOP", canvas.width / 2, 70);
     
     const shopCoinX = canvas.width / 2 - 40; drawCoinStyle(ctx, shopCoinX, 100, 8);
-    ctx.font = "bold 18px Arial"; ctx.fillStyle = "white"; ctx.textAlign = "left"; ctx.fillText(`보유 코인: ${coins}`, shopCoinX + 15, 100);
+    ctx.font = "bold 18px Arial"; ctx.fillStyle = "white"; ctx.textAlign = "left"; ctx.fillText(`보유: ${coins}`, shopCoinX + 15, 100);
 
 // 2. 캐릭터 가격 안내 문구 추가 (새로 추가할 부분)
     const priceText1 = "캐릭터는 10";
@@ -804,8 +840,8 @@ function drawShopMenu() {
     
     let sy = 160;
 
-    // CEO 섹션 (캐릭터 1개이므로 높이를 150으로 조절 가능)
-    drawShopSection("CEO", sy, 1, "#7f8c8d"); sy += 150; 
+    // CEO 섹션
+drawShopSection("CEO", sy, 1, "#7f8c8d"); sy += 200; 
     
     drawShopSection("1st Everys", sy, 2, "#BCA9E1"); sy += 200;
     
@@ -873,6 +909,18 @@ const realName = characterNames[title][i] || "Unknown";
             ctx.fillStyle = isUnlocked ? "white" : "#bdc3c7"; // 구매 안 했으면 약간 흐린 색상으로
             ctx.font = "bold 13px Arial"; 
             ctx.fillText(realName, sx + slotSize/2, sy + slotSize + 20);
+
+// 2. 이름 및 해금 조건 영역 그리기
+ctx.font = "bold 13px Arial"; 
+if (isUnlocked) {
+    ctx.fillStyle = "white";
+    ctx.fillText(realName, sx + slotSize/2, sy + slotSize + 20);
+} else {
+    ctx.fillStyle = "#ff7675"; // 미해금은 붉은색 계열로 강조
+    if (title === "CEO") {
+        ctx.fillText("최고 3,000점 달성 시 해금", sx + slotSize/2, sy - slotSize + 76);
+    } 
+}
         }
     }
 
@@ -915,6 +963,16 @@ const curH = Math.max(0, Math.floor((floorY - player.y) / 10)); // 현재 높이
             highScore = curH;
             localStorage.setItem("jumpGame_highScore", highScore); // 실시간 저장
         }
+// --- [여기에 실시간 업적 체크 로직 삽입] ---
+    // 조건: 현재 높이가 3000 이상이고, 아직 GangZi가 해금되지 않았을 때
+    if (curH >= 3000 && !unlockedHeroes.includes("GangZi")) {
+        unlockedHeroes.push("GangZi"); // 해금 목록에 추가
+        saveUnlockedHeroes();          // 로컬 스토리지 저장
+        
+        // 시각적 피드백 (선택 사항)
+        console.log("Achievement Unlocked: GangZi!");
+        // 여기에 나중에 "CEO 캐릭터 해금!" 이라는 자막을 띄우는 코드를 넣으면 좋습니다.
+    }
         // ===========================================================================
     }
 
