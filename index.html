@@ -992,7 +992,6 @@ const curH = Math.max(0, Math.floor((floorY - player.y) / 10)); // 현재 높이
     let touchStartY = 0;
     window.addEventListener('wheel', (e) => { if (gameState === 'SHOP') { shopScrollY += e.deltaY * 0.5; shopScrollY = Math.max(0, Math.min(shopScrollY, shopContentHeight - canvas.height + 100)); } }, { passive: true });
     canvas.addEventListener('touchmove', (e) => { if (gameState === 'SHOP') { e.preventDefault(); const touchY = e.touches[0].clientY; const deltaY = touchStartY - touchY; touchStartY = touchY; shopScrollY += deltaY * 1.5; shopScrollY = Math.max(0, Math.min(shopScrollY, shopContentHeight - canvas.height + 100)); } }, { passive: false });
-});
 </script>
 </body>
 </html>
