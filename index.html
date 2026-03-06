@@ -992,32 +992,6 @@ const curH = Math.max(0, Math.floor((floorY - player.y) / 10)); // 현재 높이
     let touchStartY = 0;
     window.addEventListener('wheel', (e) => { if (gameState === 'SHOP') { shopScrollY += e.deltaY * 0.5; shopScrollY = Math.max(0, Math.min(shopScrollY, shopContentHeight - canvas.height + 100)); } }, { passive: true });
     canvas.addEventListener('touchmove', (e) => { if (gameState === 'SHOP') { e.preventDefault(); const touchY = e.touches[0].clientY; const deltaY = touchStartY - touchY; touchStartY = touchY; shopScrollY += deltaY * 1.5; shopScrollY = Math.max(0, Math.min(shopScrollY, shopContentHeight - canvas.height + 100)); } }, { passive: false });
-
-// --- [테스트 기능: 1번 상승, 2번 코인 추가] ---
-window.addEventListener('keydown', (e) => {
-    // 1번 키: 캐릭터 상승
-    if (e.key === '1') {
-        player.isJumping = true;
-        player.vy = -5;
-        player.vx = 0;
-        player.standingOn = null;
-    }
-
-    // 키를 뗐을 때 바로 멈추고 싶다면 아래 코드를 추가하세요 (선택 사항)
-window.addEventListener('keyup', (e) => {
-    if (e.key === '1') {
-        player.vy = 0; // 상승 중지 (이후 중력에 의해 낙하)
-    }
-
-    // 2번 키: 코인 10개 즉시 지급
-    if (e.key === '2') {
-        coins += 10;
-        saveCoins();      // 로컬 스토리지에 저장
-        playCoinSound();  // 지급될 때 띠링~ 소리 효과
-    }
-});
-
-
 });
 </script>
 </body>
