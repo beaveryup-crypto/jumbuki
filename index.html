@@ -4,9 +4,26 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <meta charset="UTF-8">
     <title>Jump Game - JUMBUKI</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Jua&display=swap" rel="stylesheet">
     <style>
-        body { margin: 0; display: flex; justify-content: center; align-items: center; height: 100vh; height: 100dvh; background-color: #f0f0f0; overflow: hidden; position: fixed; width: 100%; }
-        #gameCanvas { background-color: #222; border: 5px solid #333; box-shadow: 0 10px 30px rgba(0,0,0,0.3); max-width: 100%; max-height: 100vh; object-fit: contain; }
+        body {
+            margin: 0; display: flex; justify-content: center; align-items: center;
+            height: 100vh; height: 100dvh; overflow: hidden; position: fixed; width: 100%;
+            background: radial-gradient(circle at 50% 30%, #4a3592 0%, #1b1442 55%, #0c0920 100%);
+        }
+        #gameCanvas {
+            display: block;
+            height: min(96vh, 175vw); height: min(96dvh, 175vw);
+            aspect-ratio: 400 / 700; width: auto; max-width: 100vw;
+            border-radius: 22px;
+            background: #1b1442;
+            box-shadow: 0 0 0 3px rgba(188,169,225,0.35), 0 20px 60px rgba(0,0,0,0.6), 0 0 80px rgba(163,147,235,0.25);
+            touch-action: none;
+        }
+        @media (max-width: 500px) {
+            #gameCanvas { height: min(100dvh, 175vw); border-radius: 0; box-shadow: none; }
+        }
     </style>
 </head>
 <body>
@@ -20,6 +37,22 @@ const canvas = document.getElementById('gameCanvas');
     const ctx = canvas.getContext('2d');
 
 ctx.imageSmoothingEnabled = false;
+
+    // --- [디자인 공용] ---
+    const FONT = "'Jua', 'Malgun Gothic', sans-serif";
+    if (document.fonts) document.fonts.load("20px Jua").catch(() => {});
+
+    // 둥근 사각형 경로
+    function roundRectPath(x, y, w, h, r) {
+        r = Math.max(0, Math.min(r, w / 2, h / 2));
+        ctx.beginPath();
+        ctx.moveTo(x + r, y);
+        ctx.arcTo(x + w, y, x + w, y + h, r);
+        ctx.arcTo(x + w, y + h, x, y + h, r);
+        ctx.arcTo(x, y + h, x, y, r);
+        ctx.arcTo(x, y, x + w, y, r);
+        ctx.closePath();
+    }
 
     let gameState = 'LOBBY'; 
     let isPopupOpen = false;
@@ -67,27 +100,34 @@ const shopSections = [
         localStorage.setItem("jumpGame_unlocked", JSON.stringify(unlockedHeroes)); 
     }
 
-    // 저장 실행 함수 (코인 소모 포함)
-function executeSave() {
-        if (coins >= 10) {
-            coins -= 10;
-            saveCoins();
-            
+    // 자동 저장 (나가기 / 창 닫기 / 다른 앱으로 전환 시 호출, 코인 소모 없음)
+    function autoSaveProgress() {
+        if (gameState !== 'PLAYING') return;
+        try {
+            // 게임 오버였거나 바닥에 있으면 이어할 게 없으므로 저장 기록을 지움
+            if (isGameOver || (!groundGone && player.y >= startY - 1)) { localStorage.removeItem("jumpGame_saveData"); return; }
+
             // 현재 시간을 "YYYY-MM-DD HH:MM" 포맷으로 생성
             const now = new Date();
             const timeStr = `${now.getFullYear()}-${(now.getMonth()+1).toString().padStart(2, '0')}-${now.getDate().toString().padStart(2, '0')} ${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
 
             const gameData = {
                 player: { x: player.x, y: player.y, angle: player.angle, jumpDirection: jumpDirection },
-                platforms: platforms,
+                platforms: platforms.filter(p => !p.removing),   // 무너지는 중인 발판은 저장하지 않음
                 cameraY: cameraY,
                 lastMovingIndex: lastMovingIndex,
-                saveDate: timeStr // 저장 시간 추가
+                groundGone: groundGone,
+                runMaxH: runMaxH,
+                runStartBest: runStartBest,
+                saveDate: timeStr
             };
             localStorage.setItem("jumpGame_saveData", JSON.stringify(gameData));
-            isPopupOpen = false;
-        }
+        } catch (e) { /* 저장 공간 부족 등은 무시 */ }
     }
+
+    // 창 닫기 / 새로고침 / 휴대폰에서 다른 앱으로 전환할 때 자동 저장
+    window.addEventListener('pagehide', autoSaveProgress);
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') autoSaveProgress(); });
 
     function loadGameProgress() {
         const saved = localStorage.getItem("jumpGame_saveData");
@@ -97,10 +137,13 @@ function executeSave() {
         player.angle = data.player.angle; jumpDirection = data.player.jumpDirection;
         platforms = data.platforms; cameraY = data.cameraY;
         lastMovingIndex = data.lastMovingIndex;
-        player.isJumping = true; player.vy = 0;
-        
-        // 이어하기 성공 후 데이터 삭제
-        localStorage.removeItem("jumpGame_saveData");
+        player.isJumping = true; player.vy = 0; player.vx = 0; player.standingOn = null;
+        isGameOver = false; gameOverT = 0; isCharging = false; particles = [];
+        // 예전 버전 저장 기록에는 아래 값이 없으므로 기본값 사용
+        groundGone = !!data.groundGone; groundFade = groundGone ? 0 : 1;
+        runMaxH = data.runMaxH || Math.max(0, Math.floor((startY - player.y) / 10));
+        runStartBest = (data.runStartBest !== undefined) ? data.runStartBest : highScore;
+        // 저장 기록은 남겨둠 (다음에 나가거나 창을 닫을 때 새 위치로 덮어씀)
         return true;
     }
 
@@ -118,14 +161,87 @@ function executeSave() {
     }
 
     function drawButtonStyled(text, x, y, color, width, height, font) {
-        ctx.fillStyle = color; ctx.fillRect(x - width/2, y - height/2, width, height);
-        ctx.fillStyle = "white"; ctx.font = font; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(text, x, y);
+        const bx = x - width / 2, by = y - height / 2, r = Math.min(16, height / 2);
+        ctx.save();
+        // 아래쪽 입체 그림자
+        ctx.fillStyle = "rgba(0, 0, 0, 0.35)";
+        roundRectPath(bx, by + 4, width, height, r); ctx.fill();
+        // 본체
+        ctx.fillStyle = color;
+        roundRectPath(bx, by, width, height, r); ctx.fill();
+        // 광택
+        const g = ctx.createLinearGradient(0, by, 0, by + height);
+        g.addColorStop(0, "rgba(255,255,255,0.35)");
+        g.addColorStop(0.5, "rgba(255,255,255,0.06)");
+        g.addColorStop(1, "rgba(0,0,0,0.15)");
+        ctx.fillStyle = g; ctx.fill();
+        ctx.strokeStyle = "rgba(255,255,255,0.35)"; ctx.lineWidth = 1.5; ctx.stroke();
+        // 글자 (살짝 그림자)
+        ctx.font = font; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        ctx.fillStyle = "rgba(0,0,0,0.3)"; ctx.fillText(text, x, y + 1.5);
+        ctx.fillStyle = "white"; ctx.fillText(text, x, y);
+        ctx.restore();
     }
 
     // --- [게임 물리 및 캐릭터] ---
     const gravity = 0.5; const floorY = canvas.height - 60;
     let currentHero = "Tenko Shibuki"; 
-    const player = { x: canvas.width / 2 - 20, y: floorY, width: 40, height: 40, vx: 0, vy: 0, angle: 0, isJumping: false, standingOn: null };
+    const PLAYER_SIZE = 48;                       // 캐릭터 크기 (기존 40)
+    const groundY = floorY + 40;                  // 잔디 윗면
+    const startY = groundY - PLAYER_SIZE;         // 바닥에 서 있을 때 캐릭터 y
+    const player = { x: canvas.width / 2 - PLAYER_SIZE / 2, y: startY, width: PLAYER_SIZE, height: PLAYER_SIZE, vx: 0, vy: 0, angle: 0, isJumping: false, standingOn: null, squash: 0 };
+
+    // --- [게임 오버 규칙] ---
+    // 발판에서 점프하면 그 발판보다 아래 있는 발판(1번 발판이면 땅까지)은 무너져 사라지고,
+    // 점프한 발판보다 아래로 떨어지면 게임 오버.
+    let groundGone = false;   // 땅이 무너졌는지
+    let groundFade = 1;       // 땅 사라지는 연출 (1 → 0)
+    let isGameOver = false;
+    let gameOverT = 0;        // 게임 오버 화면 등장 연출용 시간
+    let runMaxH = 0;          // 이번 판 최고 높이
+    let runStartBest = 0;     // 이번 판 시작할 때의 최고 기록 (신기록 판단용)
+
+    // 점프할 때: 밟고 있던 발판과 그 바로 아래 발판 1개는 남기고, 그보다 더 아래만 무너뜨림
+    // (땅은 0번 발판으로 취급 → 2번 발판에서 뛸 때부터 땅이 무너짐)
+    function crumbleBelow(fromPlat) {
+        if (!fromPlat) return;                          // 땅에서 뛸 때는 아래에 아무것도 없음
+        const keepFrom = fromPlat.index - 1;            // 이 번호 이상은 남김
+        let count = 0;
+        platforms.forEach(p => {
+            if (p.index < keepFrom && !p.removing) { p.removing = true; p.fade = 1; p.fall = 0; count++; }
+        });
+        let groundJustGone = false;
+        if (!groundGone && keepFrom > 0) {
+            groundGone = true; groundJustGone = true;
+            toast = { text: "아래 발판이 무너졌어요! 떨어지면 게임 오버", t: 2.5 };
+        }
+        if (count > 0 || groundJustGone) playCrumbleSound();
+    }
+
+    // 무너지는 발판/땅 연출 진행, 다 사라진 발판은 목록에서 제거
+    function updateCrumbles(dt) {
+        if (groundGone && groundFade > 0) groundFade = Math.max(0, groundFade - dt * 1.5);
+        let any = false;
+        platforms.forEach(p => {
+            if (!p.removing) return;
+            p.fade -= dt * 2; p.fall += dt * 260; any = true;
+        });
+        if (any) platforms = platforms.filter(p => !p.removing || p.fade > 0);
+    }
+
+    function triggerGameOver() {
+        if (isGameOver) return;
+        isGameOver = true; gameOverT = 0; isCharging = false; toast = null;
+        localStorage.removeItem("jumpGame_saveData");   // 끝난 판은 이어하기 불가
+        playGameOverSound();
+    }
+
+    // 지금 안전하게 설 수 있는 가장 낮은 높이 (이보다 아래로 떨어지면 끝)
+    function lowestSafeY() {
+        if (!groundGone) return groundY;
+        const p = platforms.find(q => !q.removing);
+        return p ? p.y : groundY;
+    }
 
     const heroData = {
 "Ayatsuno Yuni": {
@@ -523,29 +639,118 @@ draw(0, 7, "#ffeae4"); draw(1, 7, "#ffeae4"); draw(2, 7, "#ffeae4"); draw(3, 7, 
 
 };
 
-function drawHero(ctx, x, y, width, height, heroName) {
-    const hero = heroData[heroName] || heroData["Tenko Shibuki"];
-    const gridSize = 8; 
+// --- [캐릭터 렌더링] ---
+// heroData의 8x8 도트는 그대로 쓰고, 그 위에 외곽선·음영·눈 반짝임·볼터치를 더해
+// 크기별로 한 번만 만들어 두고(캐시) 매 프레임 이미지로 그린다.
 
-    ctx.save();
-    // 1. 캐릭터가 그려질 위치로 기준점 이동
-    ctx.translate(x, y);
-    
-    // 2. 8x8 그림을 width/height 크기로 늘리기 위해 스케일 조정
-    // (예: width가 40이면 40/8 = 5배 확대)
-    ctx.scale(width / gridSize, height / gridSize);
+// "d2d3e1"(# 빠짐), "##d5c5ef"(# 중복) 같은 오타 색상도 올바르게 읽는다
+function normalizeHeroColor(c) {
+    if (!c || c === "color") return null;
+    const hex = String(c).replace(/^#+/, "");
+    return /^[0-9a-fA-F]{6}$/.test(hex) ? "#" + hex.toLowerCase() : null;
+}
 
-    // 3. 점 찍기 함수 (이제 좌표는 항상 0~7 사이의 정수)
-    const p = (gx, gy, color) => {
-        ctx.fillStyle = color;
-        // 스케일이 적용된 상태이므로 1x1 크기로 그려도 실제로는 pixelSize만큼 그려짐
-        ctx.fillRect(gx, gy, 1, 1); 
-    };
+function buildHeroGrid(name) {
+    const cells = {};
+    let minY = 0;
+    heroData[name].render((gx, gy, color) => {
+        const c = normalizeHeroColor(color);
+        if (!c) return;
+        cells[gx + "," + gy] = c;
+        if (gy < minY) minY = gy;
+    });
+    // 얼굴(0~7행) 안에 빈칸이 있으면 좌우 대칭 칸 색으로 채움 (도트 누락 보정)
+    for (let gy = 0; gy < 8; gy++) for (let gx = 0; gx < 8; gx++) {
+        if (!cells[gx + "," + gy] && cells[(7 - gx) + "," + gy]) cells[gx + "," + gy] = cells[(7 - gx) + "," + gy];
+    }
+    return { cells, minY };
+}
 
-    // 4. 렌더링 실행
-    hero.render(p);
-    
-    ctx.restore();
+const heroSpriteCache = {};
+const EYE_CELLS = ["1,4", "2,4", "1,5", "2,5", "5,4", "6,4", "5,5", "6,5"];
+
+// 눈 감은 모습에서 칸마다 쓸 색 (없으면 원래 색)
+// - 눈썹(눈동자 위 검은 칸, 3행): 바로 위 칸(앞머리/이마) 색으로 덮음
+// - 눈 바깥 검은 칸(4행 양 끝): 바로 아래 칸(옆머리/볼) 색으로 덮음
+// - 눈 흰자/눈동자: 피부색
+function closedEyeColor(cells, k, skin) {
+    const [gx, gy] = k.split(",").map(Number);
+    if (EYE_CELLS.includes(k)) return skin;
+    if (gy === 3 && [1, 2, 5, 6].includes(gx)) return cells[gx + ",2"] || skin;
+    if (gy === 4 && (gx === 0 || gx === 7)) return cells[gx + ",5"] || skin;
+    return cells[k];
+}
+
+function makeHeroSprite(name, S, closed) {
+    const { cells, minY } = buildHeroGrid(name);
+    const pad = Math.max(1, Math.round(S * 0.22));          // 외곽선 두께
+    const rows = 8 - minY;
+    const cv = document.createElement("canvas");
+    cv.width = Math.ceil(8 * S + pad * 2); cv.height = Math.ceil(rows * S + pad * 2);
+    const c = cv.getContext("2d");
+    const ox = pad, oy = pad - minY * S;
+    const cellRect = (gx, gy) => [Math.round(ox + gx * S), Math.round(oy + gy * S), Math.round(ox + (gx + 1) * S) - Math.round(ox + gx * S), Math.round(oy + (gy + 1) * S) - Math.round(oy + gy * S)];
+    const skin = cells["3,4"] || "#ffeae4";
+
+    // 1) 외곽선: 실루엣을 사방으로 조금씩 밀어서 진하게 깔기
+    const mask = document.createElement("canvas"); mask.width = cv.width; mask.height = cv.height;
+    const m = mask.getContext("2d"); m.fillStyle = "#24183a";
+    Object.keys(cells).forEach(k => { const [gx, gy] = k.split(",").map(Number); m.fillRect(...cellRect(gx, gy)); });
+    for (let dx = -pad; dx <= pad; dx++) for (let dy = -pad; dy <= pad; dy++) if (dx || dy) c.drawImage(mask, dx, dy);
+
+    // 2) 도트 채우기 (눈 감은 버전은 눈 자리를 피부색으로)
+    Object.keys(cells).forEach(k => {
+        const [gx, gy] = k.split(",").map(Number);
+        c.fillStyle = closed ? closedEyeColor(cells, k, skin) : cells[k];
+        c.fillRect(...cellRect(gx, gy));
+    });
+
+    // 3) 위는 밝게, 아래는 살짝 어둡게 (입체감)
+    c.globalCompositeOperation = "source-atop";
+    const g = c.createLinearGradient(0, 0, 0, cv.height);
+    g.addColorStop(0, "rgba(255,255,255,0.22)"); g.addColorStop(0.45, "rgba(255,255,255,0)"); g.addColorStop(1, "rgba(40,20,60,0.18)");
+    c.fillStyle = g; c.fillRect(0, 0, cv.width, cv.height);
+    c.globalCompositeOperation = "source-over";
+
+    // 4) 눈 반짝임
+    if (!closed) {
+        c.fillStyle = "rgba(255,255,255,0.95)";
+        [2, 5].forEach(gx => { if (cells[gx + ",4"]) c.fillRect(Math.round(ox + (gx + 0.5) * S), Math.round(oy + 4.12 * S), Math.max(1, Math.round(S * 0.36)), Math.max(1, Math.round(S * 0.36))); });
+    } else {
+        // 감은 눈: 눈 자리 가운데에 아래로 둥글게 휜 선 하나 (‿)
+        c.strokeStyle = "#24183a"; c.lineWidth = Math.max(2, S * 0.5); c.lineCap = "round";   // 감은 눈 선 두께
+        [1.5, 6.5].forEach(ex => {
+            c.beginPath();
+            c.arc(ox + ex * S, oy + 3.9 * S, S * 1.05, 0.2 * Math.PI, 0.8 * Math.PI);
+            c.stroke();
+        });
+    }
+
+    // 5) 볼터치 (그 자리가 피부색일 때만)
+    c.fillStyle = "rgba(255,110,140,0.38)";
+    [1, 6].forEach(gx => { if (cells[gx + ",6"] === skin) { c.beginPath(); c.ellipse(ox + (gx + 0.5) * S, oy + 6.3 * S, S * 0.55, S * 0.32, 0, 0, Math.PI * 2); c.fill(); } });
+
+    return { canvas: cv, pad, minY, S };
+}
+
+function getHeroSprite(name, S, closed) {
+    const key = name + "|" + S + "|" + (closed ? 1 : 0);
+    if (!heroSpriteCache[key]) heroSpriteCache[key] = makeHeroSprite(name, S, closed);
+    return heroSpriteCache[key];
+}
+
+// 몇 초에 한 번씩 깜빡임 (seed로 캐릭터마다 타이밍을 다르게)
+function isBlinking(seed) {
+    const t = (animT + (seed || 0) * 0.77) % 3.4;
+    return t < 0.13;
+}
+
+function drawHero(ctx, x, y, width, height, heroName, blink) {
+    const name = heroData[heroName] ? heroName : "Tenko Shibuki";
+    const S = width / 8;
+    const spr = getHeroSprite(name, S, !!blink);
+    const sy = height / width;
+    ctx.drawImage(spr.canvas, x - spr.pad, y + (spr.minY * S - spr.pad) * sy, spr.canvas.width, spr.canvas.height * sy);
 }
 
     let power = 0; let isCharging = false; const maxPower = 20;
@@ -565,7 +770,7 @@ function handleInputStart(x, y) {
     // 1. 팝업이 열려있을 때의 로직
     if (isPopupOpen) {
         const pw = 300;
-        const ph = (popupType === "CONTINUE") ? 200 : 180;
+        const ph = (popupType === "CONTINUE") ? 220 : 180; // 그리기(drawPopup)와 같은 높이로 맞춤
         const px = (canvas.width - pw) / 2;
         const py = (canvas.height - ph) / 2;
 
@@ -582,8 +787,7 @@ function handleInputStart(x, y) {
         } else {
             const btnY = py + 150;
             if (x > canvas.width / 2 - 110 && x < canvas.width / 2 - 20 && y > btnY - 20 && y < btnY + 20) {
-                if (popupType === "EXIT") { isPopupOpen = false; gameState = 'LOBBY'; resetGame(); }
-                else if (popupType === "SAVE_CONFIRM" && coins >= 10) { executeSave(); }
+                if (popupType === "EXIT") { isPopupOpen = false; autoSaveProgress(); gameState = 'LOBBY'; resetGame(); }
                 else if (popupType === "DATA_RESET") { localStorage.clear(); location.reload(); }
             }
             if (x > canvas.width / 2 + 20 && x < canvas.width / 2 + 110 && y > btnY - 20 && y < btnY + 20) {
@@ -605,8 +809,16 @@ function handleInputStart(x, y) {
         }
     } 
     else if (gameState === 'PLAYING') {
+        // 게임 오버 화면: 다시하기 / 로비로 (등장 직후 실수로 눌리지 않게 잠깐 대기)
+        if (isGameOver) {
+            if (gameOverT < 0.6) return;
+            if (y > GO_BTN_Y - 23 && y < GO_BTN_Y + 23) {
+                if (x > 65 && x < 195) { initAudio(); resetGame(); }
+                else if (x > 205 && x < 335) { resetGame(); gameState = 'LOBBY'; }
+            }
+            return;
+        }
         if (x > 310 && x < 395 && y > 15 && y < 50) { popupType = "EXIT"; isPopupOpen = true; }
-        else if (x > 310 && x < 395 && y > 60 && y < 95) { popupType = "SAVE_CONFIRM"; isPopupOpen = true; }
         else { if (!player.isJumping) { initAudio(); isCharging = true; power = 0; } }
     } 
 else if (gameState === 'SHOP') {
@@ -691,6 +903,27 @@ else if (gameState === 'SHOP') {
     function playJumpSound() { if (!audioCtx) return; const osc = audioCtx.createOscillator(); const gain = audioCtx.createGain(); osc.type = 'triangle'; osc.frequency.setValueAtTime(150, audioCtx.currentTime); osc.frequency.exponentialRampToValueAtTime(600, audioCtx.currentTime + 0.1); gain.gain.setValueAtTime(0.1, audioCtx.currentTime); gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1); osc.connect(gain); gain.connect(audioCtx.destination); osc.start(); osc.stop(audioCtx.currentTime + 0.1); }
     function playCoinSound() { if (!audioCtx) return; const osc = audioCtx.createOscillator(); const gain = audioCtx.createGain(); osc.type = 'sine'; osc.frequency.setValueAtTime(900, audioCtx.currentTime); osc.frequency.exponentialRampToValueAtTime(1200, audioCtx.currentTime + 0.1); gain.gain.setValueAtTime(0.1, audioCtx.currentTime); gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.2); osc.connect(gain); gain.connect(audioCtx.destination); osc.start(); osc.stop(audioCtx.currentTime + 0.2); }
 
+    function playCrumbleSound() {
+        if (!audioCtx) return;
+        const t = audioCtx.currentTime;
+        const osc = audioCtx.createOscillator(); const gain = audioCtx.createGain();
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(220, t); osc.frequency.exponentialRampToValueAtTime(60, t + 0.25);
+        gain.gain.setValueAtTime(0.06, t); gain.gain.exponentialRampToValueAtTime(0.001, t + 0.25);
+        osc.connect(gain); gain.connect(audioCtx.destination); osc.start(t); osc.stop(t + 0.25);
+    }
+    function playGameOverSound() {
+        if (!audioCtx) return;
+        const t = audioCtx.currentTime;
+        [523, 392, 330, 262].forEach((f, i) => {
+            const osc = audioCtx.createOscillator(); const gain = audioCtx.createGain();
+            osc.type = 'triangle'; osc.frequency.setValueAtTime(f, t + i * 0.16);
+            gain.gain.setValueAtTime(0.0001, t); gain.gain.setValueAtTime(0.12, t + i * 0.16);
+            gain.gain.exponentialRampToValueAtTime(0.001, t + i * 0.16 + 0.3);
+            osc.connect(gain); gain.connect(audioCtx.destination); osc.start(t + i * 0.16); osc.stop(t + i * 0.16 + 0.32);
+        });
+    }
+
     window.addEventListener('mousedown', (e) => { const pos = getCanvasTouchPos(e); handleInputStart(pos.x, pos.y); });
     
 canvas.addEventListener('touchstart', (e) => {
@@ -715,12 +948,18 @@ canvas.addEventListener('touchstart', (e) => {
     canvas.addEventListener('touchend', (e) => { if (gameState === 'PLAYING' && isCharging) { e.preventDefault(); jump(); isCharging = false; } }, { passive: false });
 
     function getCanvasTouchPos(e) { const rect = canvas.getBoundingClientRect(); const clientX = e.touches ? e.touches[0].clientX : e.clientX; const clientY = e.touches ? e.touches[0].clientY : e.clientY; return { x: (clientX - rect.left) * (canvas.width / rect.width), y: (clientY - rect.top) * (canvas.height / rect.height) }; }
-    function jump() { player.vy = -power; player.vx = (power * 0.4) * jumpDirection; player.isJumping = true; player.standingOn = null; jumpDirection *= -1; playJumpSound(); }
+    function jump() {
+        if (isGameOver) return;
+        const from = player.standingOn;
+        player.vy = -power; player.vx = (power * 0.4) * jumpDirection; player.isJumping = true; player.standingOn = null; jumpDirection *= -1; playJumpSound();
+        crumbleBelow(from);
+    }
 
     function initPlatforms() { platforms = []; for (let i = 1; i <= 20; i++) addPlatform(i); }
     function addPlatform(index) {
-        const minWidth = 30; const baseWidth = 100; const platformHeight = 15;
-        let dynamicWidth = Math.max(minWidth, baseWidth - (index * 0.2)); 
+        // 캐릭터가 커진 만큼 발판도 조금 넓고 두껍게, 좁아지는 속도는 그대로
+        const minWidth = 36; const baseWidth = 108; const platformHeight = 16;
+        let dynamicWidth = Math.max(minWidth, baseWidth - (index * 0.2));
         let speed = 0;
         if (index > 150 && (index - lastMovingIndex) > 3) { if (Math.random() < 0.5) { speed = (Math.random() < 0.5 ? 1 : -1) * (2 + Math.min(5, index / 100)); lastMovingIndex = index; } }
         let plat = { index: index, x: Math.random() * (canvas.width - dynamicWidth), y: floorY - (index * 135), width: dynamicWidth, height: platformHeight, speed: speed, holes: [], hasCoin: (index > 0 && index % 8 === 0), coinCollected: false };
@@ -731,67 +970,55 @@ canvas.addEventListener('touchstart', (e) => {
     // --- [공용 팝업 렌더링] ---
 function drawPopup() {
         if (!isPopupOpen) return;
-        ctx.fillStyle = "rgba(0, 0, 0, 0.7)"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = "rgba(10, 8, 30, 0.72)"; ctx.fillRect(0, 0, canvas.width, canvas.height);
         
         const pw = 300; 
         const ph = (popupType === "CONTINUE") ? 220 : 180; // CONTINUE만 좀 더 크게
         const px = (canvas.width - pw) / 2; 
         const py = (canvas.height - ph) / 2;
         
-        ctx.fillStyle = "#2c3e50"; ctx.strokeStyle = "white"; ctx.lineWidth = 3; 
-        ctx.fillRect(px, py, pw, ph); ctx.strokeRect(px, py, pw, ph);
+        ctx.save();
+        ctx.shadowColor = "rgba(0,0,0,0.55)"; ctx.shadowBlur = 30; ctx.shadowOffsetY = 10;
+        const pg = ctx.createLinearGradient(0, py, 0, py + ph);
+        pg.addColorStop(0, "#3d3170"); pg.addColorStop(1, "#1f1940");
+        ctx.fillStyle = pg; roundRectPath(px, py, pw, ph, 22); ctx.fill();
+        ctx.restore();
+        ctx.strokeStyle = "rgba(188,169,225,0.6)"; ctx.lineWidth = 2;
+        roundRectPath(px, py, pw, ph, 22); ctx.stroke();
         ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillStyle = "white";
 
         if (popupType === "EXIT") {
-            ctx.font = "bold 20px Arial"; ctx.fillText("정말 나가시겠습니까?", canvas.width / 2, py + 50);
-            ctx.font = "14px Arial"; ctx.fillStyle = "#bdc3c7"; ctx.fillText("저장 없이 나가시면", canvas.width / 2, py + 85); ctx.fillText("처음부터 시작하게 됩니다.", canvas.width / 2, py + 105);
-            drawButtonStyled("확인", canvas.width / 2 - 65, py + 150, "#e74c3c", 90, 35, "bold 16px Arial");
-            drawButtonStyled("취소", canvas.width / 2 + 65, py + 150, "#7f8c8d", 90, 35, "bold 16px Arial");
+            ctx.font = "bold 20px " + FONT; ctx.fillText("정말 나가시겠습니까?", canvas.width / 2, py + 50);
+            ctx.font = "14px " + FONT; ctx.fillStyle = "#bdc3c7"; ctx.fillText("지금 위치가 자동으로 저장되며", canvas.width / 2, py + 85); ctx.fillText("다음에 이어서 할 수 있어요.", canvas.width / 2, py + 105);
+            drawButtonStyled("나가기", canvas.width / 2 - 65, py + 150, "#e74c3c", 90, 35, "bold 16px " + FONT);
+            drawButtonStyled("취소", canvas.width / 2 + 65, py + 150, "#7f8c8d", 90, 35, "bold 16px " + FONT);
         } 
         else if (popupType === "CONTINUE") {
             const saved = localStorage.getItem("jumpGame_saveData");
             const data = saved ? JSON.parse(saved) : null;
-            ctx.font = "bold 20px Arial"; ctx.fillText("저장된 기록이 있습니다", canvas.width / 2, py + 40);
+            ctx.font = "bold 20px " + FONT; ctx.fillText("저장된 기록이 있습니다", canvas.width / 2, py + 40);
             if (data) {
-                ctx.font = "12px Arial"; ctx.fillStyle = "#f1c40f";
+                ctx.font = "12px " + FONT; ctx.fillStyle = "#f1c40f";
                 ctx.fillText(`저장 시간: ${data.saveDate}`, canvas.width / 2, py + 75);
             }
-            ctx.font = "14px Arial"; ctx.fillStyle = "#bdc3c7"; 
+            ctx.font = "14px " + FONT; ctx.fillStyle = "#bdc3c7"; 
             ctx.fillText("게임을 어떻게 시작할까요?", canvas.width / 2, py + 105);
             const btnW = 85; const btnY = py + 160;
-            drawButtonStyled("이어하기", canvas.width / 2 - 95, btnY, "#27ae60", btnW, 40, "bold 14px Arial");
-            drawButtonStyled("새로하기", canvas.width / 2, btnY, "#e67e22", btnW, 40, "bold 14px Arial");
-            drawButtonStyled("취소", canvas.width / 2 + 95, btnY, "#7f8c8d", btnW, 40, "bold 14px Arial");
-            ctx.font = "11px Arial"; ctx.fillStyle = "#ff7675";
-            ctx.fillText("이어하기 및 새로하기 시 저장 데이터는 삭제됩니다.", canvas.width / 2, py + 200);
-        }
-        else if (popupType === "SAVE_CONFIRM") {
-            const saved = localStorage.getItem("jumpGame_saveData");
-            const data = saved ? JSON.parse(saved) : null;
-            ctx.font = "bold 20px Arial"; ctx.fillText("저장하시겠습니까?", canvas.width / 2, py + 45);
-            ctx.font = "12px Arial";
-            if (data) { ctx.fillStyle = "#f1c40f"; ctx.fillText(`저장 시간: ${data.saveDate}`, canvas.width / 2, py + 70); } 
-            else { ctx.fillStyle = "#7f8c8d"; ctx.fillText("저장 이력이 없습니다.", canvas.width / 2, py + 70); }
-            
-            const t1 = " 10"; const t2 = "이 필요합니다.";
-            const iconSpace = 20; const w1 = ctx.measureText(t1).width; const w2 = ctx.measureText(t2).width;
-            const totalW = iconSpace + w1 + w2;
-            let curX = (canvas.width - totalW) / 2; let textY = py + 100;
-            ctx.textAlign = "left"; drawCoinStyle(ctx, curX + 8, textY, 8); curX += iconSpace;
-            ctx.fillStyle = "#f1c40f"; ctx.fillText(t1, curX, textY); curX += w1;
-            ctx.fillStyle = "white"; ctx.fillText(t2, curX, textY);
-            drawButtonStyled("확인", canvas.width / 2 - 65, py + 150, "#27ae60", 90, 35, "bold 16px Arial");
-            drawButtonStyled("취소", canvas.width / 2 + 65, py + 150, "#7f8c8d", 90, 35, "bold 16px Arial");
+            drawButtonStyled("이어하기", canvas.width / 2 - 95, btnY, "#27ae60", btnW, 40, "bold 14px " + FONT);
+            drawButtonStyled("새로하기", canvas.width / 2, btnY, "#e67e22", btnW, 40, "bold 14px " + FONT);
+            drawButtonStyled("취소", canvas.width / 2 + 95, btnY, "#7f8c8d", btnW, 40, "bold 14px " + FONT);
+            ctx.font = "11px " + FONT; ctx.fillStyle = "#ff7675";
+            ctx.fillText("새로하기를 누르면 저장된 기록이 사라집니다.", canvas.width / 2, py + 200);
         }
         // --- [DATA_RESET 팝업 그리기 추가] ---
         else if (popupType === "DATA_RESET") {
-            ctx.font = "bold 20px Arial"; ctx.fillStyle = "#ff7675";
+            ctx.font = "bold 20px " + FONT; ctx.fillStyle = "#ff7675";
             ctx.fillText("전체 데이터 초기화", canvas.width / 2, py + 50);
-            ctx.font = "14px Arial"; ctx.fillStyle = "#bdc3c7";
+            ctx.font = "14px " + FONT; ctx.fillStyle = "#bdc3c7";
             ctx.fillText("코인, 캐릭터, 최고 기록이", canvas.width / 2, py + 85);
             ctx.fillText("모두 영구 삭제됩니다.", canvas.width / 2, py + 105);
-            drawButtonStyled("삭제", canvas.width / 2 - 65, py + 150, "#e74c3c", 90, 35, "bold 16px Arial");
-            drawButtonStyled("취소", canvas.width / 2 + 65, py + 150, "#7f8c8d", 90, 35, "bold 16px Arial");
+            drawButtonStyled("삭제", canvas.width / 2 - 65, py + 150, "#e74c3c", 90, 35, "bold 16px " + FONT);
+            drawButtonStyled("취소", canvas.width / 2 + 65, py + 150, "#7f8c8d", 90, 35, "bold 16px " + FONT);
         }
     }
 
@@ -804,129 +1031,182 @@ const characterNames = {
 };
 
 function drawShopMenu() {
-    ctx.fillStyle = "#1a1a1a"; ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.save(); ctx.translate(0, -shopScrollY);
-    
-    ctx.font = "bold 35px Arial"; ctx.fillStyle = "#f1c40f"; ctx.textAlign = "center"; ctx.fillText("SHOP", canvas.width / 2, 70);
-    
-    const shopCoinX = canvas.width / 2 - 40; drawCoinStyle(ctx, shopCoinX, 100, 8);
-    ctx.font = "bold 18px Arial"; ctx.fillStyle = "white"; ctx.textAlign = "left"; ctx.fillText(`보유: ${coins}`, shopCoinX + 15, 100);
+    const bg = ctx.createLinearGradient(0, 0, 0, canvas.height);
+    bg.addColorStop(0, "#1b1442"); bg.addColorStop(1, "#2f2266");
+    ctx.fillStyle = bg; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    drawStars(0.6, shopScrollY * -0.2);
 
-// 2. 캐릭터 가격 안내 문구 추가 (새로 추가할 부분)
+    ctx.save(); ctx.translate(0, -shopScrollY);
+
+    // 제목
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.font = "bold 42px " + FONT; ctx.lineJoin = "round";
+    ctx.lineWidth = 8; ctx.strokeStyle = "#2a1d5c"; ctx.strokeText("SHOP", canvas.width / 2, 60);
+    ctx.fillStyle = "#ffd54a"; ctx.fillText("SHOP", canvas.width / 2, 60);
+
+    // 보유 코인 알약
+    drawCoinPill(canvas.width / 2, 100, `보유 ${coins}`);
+
+    // 가격 안내
     const priceText1 = "캐릭터는 10";
     const priceText2 = " 입니다.";
-    ctx.font = "14px Arial";
-    ctx.fillStyle = "#bdc3c7";
-    ctx.textAlign = "center";
-
-    // 문구 전체의 너비를 계산하여 중앙 정렬
+    ctx.font = "14px " + FONT; ctx.fillStyle = "#b9b0d8";
     const t1W = ctx.measureText(priceText1).width;
     const t2W = ctx.measureText(priceText2).width;
-    const coinSpace = 20; // 코인 아이콘이 차지할 공간
-    const totalW = t1W + coinSpace + t2W;
-    
-    let startX = (canvas.width - totalW) / 2;
-    let textY = 130; // 보유 코인(100)보다 조금 아래에 배치
-
-    // "캐릭터는 10" 그리기
+    const coinSpace = 20;
+    let startX = (canvas.width - (t1W + coinSpace + t2W)) / 2;
+    const textY = 132;
     ctx.textAlign = "left";
     ctx.fillText(priceText1, startX, textY);
-    
-    // 코인 아이콘 그리기
-    drawCoinStyle(ctx, startX + t1W + 10, textY - 4, 7); 
-    
-    // " 입니다." 그리기
+    drawCoinStyle(ctx, startX + t1W + 10, textY, 7);
     ctx.fillText(priceText2, startX + t1W + coinSpace, textY);
-    
-    let sy = 160;
 
-    // CEO 섹션
-drawShopSection("CEO", sy, 1, "#7f8c8d"); sy += 200; 
-    
+    let sy = 160;
+    drawShopSection("CEO", sy, 1, "#9aa5b1"); sy += 200;
     drawShopSection("1st Everys", sy, 2, "#BCA9E1"); sy += 200;
-    
-    drawShopSection("2nd Universe", sy, 4, "#3498db"); sy += 360; 
-    
-    drawShopSection("3rd Cliché", sy, 4, "#e67e22"); sy += 360;
+    drawShopSection("2nd Universe", sy, 4, "#5dade2"); sy += 360;
+    drawShopSection("3rd Cliché", sy, 4, "#f0a35e"); sy += 360;
 
     ctx.restore();
-    
-    // 하단 뒤로가기 버튼 영역
-    ctx.fillStyle = "rgba(20, 20, 20, 0.95)"; ctx.fillRect(0, 610, canvas.width, 90);
-    drawButtonStyled("뒤로가기", canvas.width / 2, 650, "#7f8c8d", 160, 50, "bold 20px Arial");
+
+    // 하단 뒤로가기 영역 (부드럽게 사라지는 배경)
+    const fade = ctx.createLinearGradient(0, 585, 0, 625);
+    fade.addColorStop(0, "rgba(47,34,102,0)"); fade.addColorStop(1, "rgba(47,34,102,1)");
+    ctx.fillStyle = fade; ctx.fillRect(0, 585, canvas.width, 40);
+    ctx.fillStyle = "#2f2266"; ctx.fillRect(0, 625, canvas.width, 75);
+    drawButtonStyled("뒤로가기", canvas.width / 2, 650, "#7d74a8", 160, 50, "bold 20px " + FONT);
+}
+
+// 코인 아이콘 + 글자가 들어간 알약 모양 표시
+function drawCoinPill(cx, cy, text) {
+    ctx.save();
+    ctx.font = "bold 17px " + FONT;
+    const tw = ctx.measureText(text).width;
+    const pw = tw + 44, ph = 30, px = cx - pw / 2;
+    ctx.fillStyle = "rgba(10, 8, 30, 0.45)";
+    roundRectPath(px, cy - ph / 2, pw, ph, ph / 2); ctx.fill();
+    ctx.strokeStyle = "rgba(255, 213, 74, 0.45)"; ctx.lineWidth = 1.5; ctx.stroke();
+    drawCoinStyle(ctx, px + 17, cy, 9);
+    ctx.fillStyle = "#ffd54a"; ctx.textAlign = "left"; ctx.textBaseline = "middle";
+    ctx.fillText(text, px + 32, cy + 1);
+    ctx.restore();
+}
+
+// 자물쇠 아이콘
+function drawLock(cx, cy, color) {
+    ctx.save();
+    ctx.strokeStyle = color; ctx.lineWidth = 4; ctx.lineCap = "round";
+    ctx.beginPath(); ctx.arc(cx, cy - 6, 8, Math.PI, 0); ctx.lineTo(cx + 8, cy); ctx.moveTo(cx - 8, cy - 6); ctx.lineTo(cx - 8, cy); ctx.stroke();
+    ctx.fillStyle = color; roundRectPath(cx - 13, cy - 1, 26, 20, 5); ctx.fill();
+    ctx.fillStyle = "rgba(0,0,0,0.45)"; ctx.beginPath(); ctx.arc(cx, cy + 7, 3, 0, Math.PI * 2); ctx.fill();
+    ctx.fillRect(cx - 1.2, cy + 8, 2.4, 6);
+    ctx.restore();
 }
 
 function drawShopSection(title, y, count, color) {
-        ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.font = "bold 22px Arial"; ctx.fillStyle = color; ctx.fillText(title, canvas.width / 2, y);
-        const slotSize = 85; const spacing = 30; const startX = (canvas.width - ((slotSize * 2) + spacing)) / 2;
-        
-        for (let i = 0; i < count; i++) {
-            const r = Math.floor(i / 2); const c = i % 2;
-let sx;
+    const names = characterNames[title];
+    const owned = names.filter(n => unlockedHeroes.includes(n)).length;
+
+    // 섹션 제목 + 양옆 선
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.font = "bold 21px " + FONT;
+    const label = title;
+    const lw = ctx.measureText(label).width;
+    ctx.fillStyle = color; ctx.fillText(label, canvas.width / 2, y);
+    ctx.font = "13px " + FONT; ctx.fillStyle = "rgba(255,255,255,0.55)";
+    ctx.textAlign = "left"; ctx.fillText(`${owned}/${names.length}`, canvas.width / 2 + lw / 2 + 8, y + 1);
+    ctx.textAlign = "center";
+    ctx.strokeStyle = color; ctx.globalAlpha = 0.45; ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(40, y); ctx.lineTo(canvas.width / 2 - lw / 2 - 14, y);
+    ctx.moveTo(canvas.width / 2 + lw / 2 + 44, y); ctx.lineTo(canvas.width - 40, y);
+    ctx.stroke(); ctx.globalAlpha = 1;
+
+    const slotSize = 85; const spacing = 30;
+
+    for (let i = 0; i < count; i++) {
+        const r = Math.floor(i / 2); const c = i % 2;
+        let sx;
         if (count === 1) {
-            // 1. 캐릭터가 딱 한 명일 때: 캔버스 중앙에 배치
             sx = (canvas.width - slotSize) / 2;
         } else {
-            // 2. 캐릭터가 여러 명일 때: 기존의 2열 배치 사용
             const startX = (canvas.width - ((slotSize * 2) + spacing)) / 2;
             sx = startX + c * (slotSize + spacing);
         }
+        const sy = y + 25 + r * (slotSize + spacing + 25);
 
-const sy = y + 25 + r * (slotSize + spacing + 25);
-            
-            // 슬롯 배경 및 테두리
-            ctx.fillStyle = "rgba(255, 255, 255, 0.05)"; ctx.fillRect(sx, sy, slotSize, slotSize);
-            ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.strokeRect(sx, sy, slotSize, slotSize);
-            
-const realName = characterNames[title][i] || "Unknown";
-            const isUnlocked = unlockedHeroes.includes(realName);
-            const isSelected = (currentHero === realName); // 현재 선택 여부
+        const realName = names[i] || "Unknown";
+        const isUnlocked = unlockedHeroes.includes(realName);
+        const isSelected = (currentHero === realName);
 
-            // 슬롯 배경
-            ctx.fillStyle = isSelected ? "rgba(241, 196, 15, 0.2)" : "rgba(255, 255, 255, 0.05)";
-            ctx.fillRect(sx, sy, slotSize, slotSize);
-            
-            // 테두리 (선택 시 금색, 해금 시 섹션색, 미해금 시 점선 등)
-            ctx.strokeStyle = isSelected ? "#f1c40f" : color;
-            ctx.lineWidth = isSelected ? 4 : 2;
-            ctx.strokeRect(sx, sy, slotSize, slotSize);
+        // 카드 그림자
+        ctx.fillStyle = "rgba(0,0,0,0.3)";
+        roundRectPath(sx, sy + 4, slotSize, slotSize, 16); ctx.fill();
 
-            // 1. 이미지 영역 그리기
-            if (isUnlocked) {
-                // 구매한 경우: 실제 캐릭터 이미지
-                drawHero(ctx, sx + 10, sy + 10, slotSize - 20, slotSize - 20, realName);
-            } else {
-                // 구매하지 않은 경우: 이미지 대신 큰 물음표
-                ctx.fillStyle = "rgba(255, 255, 255, 0.1)"; 
-                ctx.fillRect(sx + 5, sy + 5, slotSize - 10, slotSize - 10);
-                
-                ctx.fillStyle = "#7f8c8d"; // 미해금 상태를 나타내는 회색
-                ctx.font = "bold 40px Arial"; 
-                ctx.fillText("?", sx + slotSize/2, sy + slotSize/2);
+        // 카드 본체
+        const cg = ctx.createLinearGradient(0, sy, 0, sy + slotSize);
+        if (isUnlocked) { cg.addColorStop(0, "rgba(255,255,255,0.16)"); cg.addColorStop(1, "rgba(255,255,255,0.05)"); }
+        else { cg.addColorStop(0, "rgba(0,0,0,0.35)"); cg.addColorStop(1, "rgba(0,0,0,0.5)"); }
+        ctx.fillStyle = "#2a2058"; roundRectPath(sx, sy, slotSize, slotSize, 16); ctx.fill();
+        ctx.fillStyle = cg; ctx.fill();
+
+        // 테두리
+        ctx.save();
+        if (isSelected) {
+            ctx.shadowColor = "#ffd54a"; ctx.shadowBlur = 16;
+            ctx.strokeStyle = "#ffd54a"; ctx.lineWidth = 3.5;
+        } else if (isUnlocked) {
+            ctx.strokeStyle = color; ctx.lineWidth = 2;
+        } else {
+            ctx.strokeStyle = "rgba(255,255,255,0.25)"; ctx.lineWidth = 2; ctx.setLineDash([6, 5]);
+        }
+        roundRectPath(sx, sy, slotSize, slotSize, 16); ctx.stroke();
+        ctx.restore();
+
+        if (isUnlocked) {
+            // 귀 등 위로 튀어나온 부분까지 포함해서 카드 가운데에 오도록 배치
+            const HS = 56, spr = getHeroSprite(realName, HS / 8, false);
+            const totalH = (8 - spr.minY) * (HS / 8);
+            const hx = Math.round(sx + (slotSize - HS) / 2);
+            const hy = Math.round(sy + (slotSize - totalH) / 2 - spr.minY * (HS / 8) + (isSelected ? 3 : 0));
+            drawHero(ctx, hx, hy, HS, HS, realName, isBlinking(i + title.length));
+        } else {
+            drawLock(sx + slotSize / 2, sy + 34, "#8a84a3");
+            if (title !== "CEO") {
+                ctx.font = "bold 14px " + FONT; ctx.textAlign = "left";
+                ctx.fillStyle = "#ffd54a";
+                drawCoinStyle(ctx, sx + slotSize / 2 - 12, sy + 68, 7);
+                ctx.fillText("10", sx + slotSize / 2 - 2, sy + 69);
+                ctx.textAlign = "center";
             }
+        }
 
-            // 2. 이름 영역 그리기 (구매 여부와 상관없이 이름은 출력)
-            ctx.fillStyle = isUnlocked ? "white" : "#bdc3c7"; // 구매 안 했으면 약간 흐린 색상으로
-            ctx.font = "bold 13px Arial"; 
-            ctx.fillText(realName, sx + slotSize/2, sy + slotSize + 20);
+        // 사용 중 배지
+        if (isSelected) {
+            ctx.fillStyle = "#ffd54a";
+            roundRectPath(sx + slotSize / 2 - 26, sy - 9, 52, 18, 9); ctx.fill();
+            ctx.fillStyle = "#3a2a00"; ctx.font = "bold 11px " + FONT;
+            ctx.fillText("사용 중", sx + slotSize / 2, sy);
+        }
 
-// 2. 이름 및 해금 조건 영역 그리기
-ctx.font = "bold 13px Arial"; 
-if (isUnlocked) {
-    ctx.fillStyle = "white";
-    ctx.fillText(realName, sx + slotSize/2, sy + slotSize + 20);
-} else {
-    ctx.fillStyle = "#ff7675"; // 미해금은 붉은색 계열로 강조
-    if (title === "CEO") {
-        ctx.fillText("최고 3,000점 달성 시 해금", sx + slotSize/2, sy - slotSize + 76);
-    } 
-}
+        // 이름
+        ctx.font = "bold 13px " + FONT;
+        ctx.fillStyle = isUnlocked ? "white" : "#a39dbd";
+        ctx.fillText(realName, sx + slotSize / 2, sy + slotSize + 18);
+
+        if (!isUnlocked && title === "CEO") {
+            ctx.font = "12px " + FONT; ctx.fillStyle = "#ff8a8a";
+            ctx.fillText("최고 3,000점 달성 시 해금", sx + slotSize / 2, sy + slotSize + 37);
         }
     }
+}
 
     function update(dt) {
         if (isPopupOpen) return; const timeAdj = dt * 60;
+        if (isGameOver) { gameOverT += dt; updateCrumbles(dt); return; }
+        updateCrumbles(dt);
         platforms.forEach(plat => {
+            if (plat.removing) return;
             if (plat.speed !== 0) {
                 const moveStep = plat.speed * timeAdj; plat.x += moveStep;
                 if (plat.x <= 0 || plat.x + plat.width >= canvas.width) plat.speed *= -1;
@@ -934,7 +1214,7 @@ if (isUnlocked) {
             }
             if (plat.hasCoin && !plat.coinCollected) {
                 const cx = plat.x + plat.width / 2; const cy = plat.y - 20;
-                if (Math.abs(cx - (player.x + 20)) < 30 && Math.abs(cy - (player.y + 20)) < 30) { plat.coinCollected = true; coins++; saveCoins(); playCoinSound(); }
+                if (Math.abs(cx - (player.x + player.width / 2)) < 32 && Math.abs(cy - (player.y + player.height / 2)) < 32) { plat.coinCollected = true; spawnParticles(cx, cy, "#ffe066", 12, 4); coins++; saveCoins(); playCoinSound(); }
             }
         });
         if (isCharging) power = Math.min(maxPower, power + 0.4 * timeAdj);
@@ -943,22 +1223,32 @@ if (isUnlocked) {
             if (player.x + player.width > canvas.width || player.x < 0) { player.vx *= -0.7; player.x = player.x < 0 ? 0 : canvas.width - player.width; }
             if (player.vy > 0) {
                 platforms.forEach(plat => {
+                    if (plat.removing || !player.isJumping) return;
                     if (player.x + player.width > plat.x && player.x < plat.x + plat.width && player.y + player.height > plat.y && player.y + player.height < plat.y + plat.height + (player.vy * timeAdj)) {
-                        player.y = plat.y - player.height; player.vy = 0; player.vx = 0; player.isJumping = false; player.standingOn = plat;
+                        player.y = plat.y - player.height; spawnParticles(player.x + player.width / 2, plat.y, "rgba(255,255,255,0.9)", 8, 3); player.squash = 1; player.vy = 0; player.vx = 0; player.isJumping = false; player.standingOn = plat;
                         player.angle = Math.round(player.angle / (Math.PI / 2)) * (Math.PI / 2);
                     }
                 });
             }
-            if (player.y >= floorY) { 
-                player.y = floorY; player.vy = 0; player.vx = 0; player.isJumping = false; player.standingOn = null; 
+            if (!groundGone && player.y >= startY) {
+                player.y = startY; spawnParticles(player.x + player.width / 2, groundY, "rgba(255,255,255,0.9)", 8, 3); player.squash = 1; player.vy = 0; player.vx = 0; player.isJumping = false; player.standingOn = null; 
                 player.angle = Math.round(player.angle / (Math.PI / 2)) * (Math.PI / 2); // 바닥 착지 각도 수정
             }
         }
         let highestPlatform = platforms[platforms.length - 1];
         if (player.y < highestPlatform.y + 500) { for(let k = 1; k <= 10; k++) addPlatform(highestPlatform.index + k); }
-        cameraY += (Math.min(0, player.y - canvas.height * 0.7) - cameraY) * (cameraSmoothness * timeAdj);
+        // 카메라: 캐릭터를 따라가되, 안전한 발판보다 너무 아래로는 내려가지 않음
+        // (그래서 떨어지면 캐릭터가 화면 아래로 사라짐)
+        const safeY = lowestSafeY();
+        let camTarget = Math.min(0, player.y - canvas.height * 0.7);
+        if (groundGone) camTarget = Math.min(camTarget, safeY + 160 - canvas.height);
+        cameraY += (camTarget - cameraY) * (cameraSmoothness * timeAdj);
 
-const curH = Math.max(0, Math.floor((floorY - player.y) / 10)); // 현재 높이 계산
+        // 안전한 발판보다 한참 아래로 떨어지면 게임 오버
+        if (groundGone && player.isJumping && player.vy > 0 && player.y > safeY + 220) { triggerGameOver(); return; }
+
+const curH = Math.max(0, Math.floor((startY - player.y) / 10)); // 현재 높이 계산
+        if (curH > runMaxH) runMaxH = curH;
         if (curH > highScore) {
             highScore = curH;
             localStorage.setItem("jumpGame_highScore", highScore); // 실시간 저장
@@ -970,79 +1260,368 @@ const curH = Math.max(0, Math.floor((floorY - player.y) / 10)); // 현재 높이
         saveUnlockedHeroes();          // 로컬 스토리지 저장
         
         // 시각적 피드백 (선택 사항)
-        console.log("Achievement Unlocked: GangZi!");
+        toast = { text: "CEO 캐릭터 GangZi 해금!", t: 3 };
         // 여기에 나중에 "CEO 캐릭터 해금!" 이라는 자막을 띄우는 코드를 넣으면 좋습니다.
     }
         // ===========================================================================
     }
 
     let highScore = parseInt(localStorage.getItem("jumpGame_highScore")) || 0;
-    let stars = []; for(let i=0; i<100; i++) stars.push({ x: Math.random() * canvas.width, y: -Math.random() * 20000, size: Math.random() * 2 });
+
+    // --- [배경/효과 요소] ---
+    let animT = 0;          // 애니메이션용 시간(초)
+    let toast = null;       // 화면 상단 알림
+    let particles = [];     // 착지 먼지, 코인 반짝이
+    const stars = [];
+    for (let i = 0; i < 90; i++) stars.push({ x: Math.random() * canvas.width, y: Math.random() * canvas.height, size: 0.6 + Math.random() * 1.6, tw: Math.random() * Math.PI * 2 });
+    const clouds = [];
+    for (let i = 0; i < 7; i++) clouds.push({ x: Math.random() * 520, y: Math.random() * canvas.height, s: 0.6 + Math.random() * 0.8, v: 6 + Math.random() * 10 });
+
+    function spawnParticles(x, y, color, n, spread) {
+        for (let i = 0; i < n; i++) {
+            particles.push({ x, y, vx: (Math.random() - 0.5) * spread, vy: -Math.random() * spread * 0.7, life: 1, size: 2 + Math.random() * 3, color });
+        }
+    }
+
+    // 높이에 따라 하늘색이 낮 → 노을 → 밤 → 우주로 바뀜
+    const SKY = [
+        { a: 0.0, top: "#4fa3ff", bot: "#c9ecff" },
+        { a: 0.3, top: "#6b5bd6", bot: "#ffb4c8" },
+        { a: 0.65, top: "#1d1b4f", bot: "#5b3c8f" },
+        { a: 1.0, top: "#05061a", bot: "#1b1440" }
+    ];
+    function hexToRgb(h) { const n = parseInt(h.slice(1), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; }
+    function mixColor(c1, c2, t) {
+        const a = hexToRgb(c1), b = hexToRgb(c2);
+        return `rgb(${Math.round(a[0] + (b[0] - a[0]) * t)}, ${Math.round(a[1] + (b[1] - a[1]) * t)}, ${Math.round(a[2] + (b[2] - a[2]) * t)})`;
+    }
+    function skyAt(alt) {
+        for (let i = 0; i < SKY.length - 1; i++) {
+            const s0 = SKY[i], s1 = SKY[i + 1];
+            if (alt <= s1.a) {
+                const t = (alt - s0.a) / (s1.a - s0.a);
+                return [mixColor(s0.top, s1.top, t), mixColor(s0.bot, s1.bot, t)];
+            }
+        }
+        return [SKY[SKY.length - 1].top, SKY[SKY.length - 1].bot];
+    }
+
+    function drawStars(alpha, offset) {
+        if (alpha <= 0) return;
+        const H = canvas.height;
+        ctx.save(); ctx.fillStyle = "white";
+        stars.forEach(s => {
+            const y = (((s.y + offset) % H) + H) % H;
+            ctx.globalAlpha = alpha * (0.45 + 0.55 * Math.abs(Math.sin(animT * 1.5 + s.tw)));
+            ctx.beginPath(); ctx.arc(s.x, y, s.size, 0, Math.PI * 2); ctx.fill();
+        });
+        ctx.restore();
+    }
+
+    function drawClouds(alpha, offsetY) {
+        if (alpha <= 0) return;
+        const H = canvas.height + 120, W = canvas.width + 160;
+        ctx.save(); ctx.globalAlpha = alpha; ctx.fillStyle = "white";
+        clouds.forEach(c => {
+            const x = ((c.x + animT * c.v) % W + W) % W - 80;
+            const y = (((c.y + offsetY) % H) + H) % H - 60;
+            const s = c.s;
+            ctx.beginPath();
+            ctx.moveTo(x + 18 * s, y); ctx.arc(x, y, 18 * s, 0, Math.PI * 2);
+            ctx.moveTo(x + 44 * s, y - 10 * s); ctx.arc(x + 22 * s, y - 10 * s, 22 * s, 0, Math.PI * 2);
+            ctx.moveTo(x + 62 * s, y); ctx.arc(x + 44 * s, y, 18 * s, 0, Math.PI * 2);
+            ctx.rect(x, y - 2 * s, 44 * s, 20 * s);
+            ctx.fill();
+        });
+        ctx.restore();
+    }
+
+    function drawPlatform(plat) {
+        const moving = plat.speed !== 0;
+        const r = 7;
+        // 그림자
+        ctx.fillStyle = "rgba(0,0,0,0.18)";
+        roundRectPath(plat.x + 2, plat.y + 5, plat.width, plat.height, r); ctx.fill();
+        ctx.save();
+        roundRectPath(plat.x, plat.y, plat.width, plat.height, r); ctx.clip();
+        const g = ctx.createLinearGradient(0, plat.y, 0, plat.y + plat.height);
+        if (moving) { g.addColorStop(0, "#efe8ff"); g.addColorStop(1, "#a393eb"); }   // 움직이는 발판은 보라색
+        else { g.addColorStop(0, "#ffe680"); g.addColorStop(1, "#f5b400"); }         // 일반 발판은 치즈색
+        ctx.fillStyle = g; ctx.fillRect(plat.x, plat.y, plat.width, plat.height);
+        ctx.fillStyle = moving ? "rgba(94,80,161,0.45)" : "rgba(214,150,0,0.6)";
+        plat.holes.forEach(h => { ctx.beginPath(); ctx.arc(plat.x + h.x, plat.y + h.y, h.size, 0, Math.PI * 2); ctx.fill(); });
+        ctx.fillStyle = "rgba(255,255,255,0.6)"; ctx.fillRect(plat.x, plat.y, plat.width, 3);
+        ctx.restore();
+    }
+
+    // 땅: 무너지면 아래로 떨어지며 사라짐
+    function drawGround() {
+        if (groundFade <= 0) return;
+        ctx.save();
+        ctx.globalAlpha = groundFade;
+        ctx.translate(0, (1 - groundFade) * 140);
+        drawGroundBody();
+        ctx.restore();
+    }
+
+    function drawGroundBody() {
+        const gy = groundY;
+        const dirt = ctx.createLinearGradient(0, gy, 0, gy + 300);
+        dirt.addColorStop(0, "#8a5a36"); dirt.addColorStop(1, "#3d2414");
+        ctx.fillStyle = dirt; ctx.fillRect(0, gy, canvas.width, 2000);
+        ctx.fillStyle = "rgba(0,0,0,0.12)";
+        for (let i = 0; i < 9; i++) { ctx.beginPath(); ctx.ellipse(25 + i * 45 + (i % 2) * 12, gy + 40 + (i % 3) * 12, 6, 3.5, 0, 0, Math.PI * 2); ctx.fill(); }
+        ctx.fillStyle = "#3fae4f"; ctx.fillRect(0, gy, canvas.width, 20);
+        ctx.fillStyle = "#2e8a3d"; ctx.fillRect(0, gy + 20, canvas.width, 5);
+        ctx.fillStyle = "#62d16a";
+        for (let x = 0; x < canvas.width; x += 14) {
+            ctx.beginPath(); ctx.moveTo(x, gy + 2); ctx.lineTo(x + 4, gy - 6 - (x % 3) * 2); ctx.lineTo(x + 8, gy + 2); ctx.fill();
+        }
+        ctx.fillStyle = "rgba(255,255,255,0.25)"; ctx.fillRect(0, gy, canvas.width, 3);
+    }
+
+    function updateParticles(dt) {
+        const k = dt * 60;
+        particles.forEach(p => { p.x += p.vx * k; p.y += p.vy * k; p.vy += 0.15 * k; p.life -= dt * 2; });
+        particles = particles.filter(p => p.life > 0);
+    }
+    function drawParticles() {
+        ctx.save();
+        particles.forEach(p => { ctx.globalAlpha = Math.max(0, p.life); ctx.fillStyle = p.color; ctx.fillRect(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size); });
+        ctx.restore();
+    }
 
     function renderGame(dt) {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
-        let alt = Math.min(1, Math.abs(cameraY) / 20000);
-        ctx.fillStyle = `rgb(${Math.floor(135-125*alt)}, ${Math.floor(206-196*alt)}, ${Math.floor(235-215*alt)})`;
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        const alt = Math.min(1, Math.abs(cameraY) / 20000);
+        const [skyTop, skyBot] = skyAt(alt);
+        const sky = ctx.createLinearGradient(0, 0, 0, canvas.height);
+        sky.addColorStop(0, skyTop); sky.addColorStop(1, skyBot);
+        ctx.fillStyle = sky; ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        // 별(높이 올라갈수록 보임), 구름(낮을 때만 보임) - 시차 스크롤
+        drawStars(Math.min(1, Math.max(0, (alt - 0.15) * 2.5)), -cameraY * 0.05);
+        drawClouds(Math.max(0, 0.85 - alt * 2.5), -cameraY * 0.3);
+
         ctx.save(); ctx.translate(0, -cameraY);
-        stars.forEach(s => { ctx.fillStyle = "white"; ctx.beginPath(); ctx.arc(s.x, s.y, s.size, 0, Math.PI*2); ctx.fill(); });
-        ctx.fillStyle = "#8B4513"; ctx.fillRect(0, floorY + 40, canvas.width, 2000); ctx.fillStyle = "#228B22"; ctx.fillRect(0, floorY + 40, canvas.width, 40);
+        drawGround();
+
         platforms.forEach(plat => {
-            ctx.save(); ctx.beginPath(); ctx.rect(plat.x, plat.y, plat.width, plat.height); ctx.clip();
-            ctx.fillStyle = "#FFD700"; ctx.fillRect(plat.x, plat.y, plat.width, plat.height);
-            ctx.fillStyle = "#E6B800"; plat.holes.forEach(h => { ctx.beginPath(); ctx.arc(plat.x + h.x, plat.y + h.y, h.size, 0, Math.PI*2); ctx.fill(); });
-            ctx.restore();
-            if (plat.hasCoin && !plat.coinCollected) drawCoinStyle(ctx, plat.x + plat.width / 2, plat.y - 20, 10);
+            if (plat.y - cameraY > canvas.height + 50 || plat.y - cameraY < -50) return; // 화면 밖은 생략
+            if (plat.removing) {
+                // 무너지는 발판: 흔들리며 떨어지고 투명해짐
+                ctx.save();
+                ctx.globalAlpha = Math.max(0, plat.fade);
+                ctx.translate(Math.sin(plat.fall * 0.3) * 2, plat.fall);
+                drawPlatform(plat);
+                ctx.restore();
+                return;
+            }
+            drawPlatform(plat);
+            if (plat.hasCoin && !plat.coinCollected) {
+                const cx = plat.x + plat.width / 2;
+                const cy = plat.y - 20 + Math.sin(animT * 3 + plat.index) * 3;
+                const glow = ctx.createRadialGradient(cx, cy, 2, cx, cy, 20);
+                glow.addColorStop(0, "rgba(255,240,150,0.55)"); glow.addColorStop(1, "rgba(255,240,150,0)");
+                ctx.fillStyle = glow; ctx.beginPath(); ctx.arc(cx, cy, 20, 0, Math.PI * 2); ctx.fill();
+                drawCoinStyle(ctx, cx, cy, 10);
+            }
         });
 
-        const curH = Math.max(0, Math.floor((floorY - player.y) / 10));
-        if (!player.isJumping && curH <= 500) {
-            ctx.fillStyle = "white"; ctx.font = "bold 16px Arial"; ctx.textAlign = "center";
-            let arrow = jumpDirection === 1 ? "다음 점프: 오른쪽 >" : "< 왼쪽 :다음 점프";
-            ctx.fillText(arrow, player.x + 20, player.y - 40);
+        updateParticles(dt);
+        drawParticles();
+
+        const curH = Math.max(0, Math.floor((startY - player.y) / 10));
+        const half = player.width / 2;
+
+        // 발밑 그림자
+        if (!player.isJumping) {
+            ctx.fillStyle = "rgba(0,0,0,0.25)";
+            ctx.beginPath(); ctx.ellipse(player.x + half, player.y + player.height + 1, half - 3, 4.5, 0, 0, Math.PI * 2); ctx.fill();
         }
 
-        ctx.save(); ctx.translate(player.x + 20, player.y + 20);
+        // 캐릭터: 힘 모을 때 눌림 + 착지 시 찌그러짐 + 서 있을 때 숨쉬기
+        const charge = isCharging ? power / maxPower : 0;
+        player.squash = Math.max(0, player.squash - dt * 6);
+        const breathe = (!player.isJumping && !isCharging) ? Math.sin(animT * 3) * 0.025 : 0;
+        const sq = charge * 0.22 + player.squash * 0.2;
+        ctx.save();
+        ctx.translate(player.x + half, player.y + player.height);
+        ctx.scale(1 + sq * 0.7 - breathe, 1 - sq + breathe);
+        ctx.translate(0, -half);
         if (player.isJumping) player.angle += (player.vx > 0 ? 0.2 : -0.2) * (dt * 60);
-        ctx.rotate(player.angle); drawHero(ctx, -20, -20, 40, 40, currentHero);
-        ctx.restore();
-        if (isCharging) { ctx.fillStyle = "#ccc"; ctx.fillRect(player.x, player.y - 20, 40, 10); ctx.fillStyle = "#e74c3c"; ctx.fillRect(player.x, player.y - 20, (power/maxPower)*40, 10); }
+        ctx.rotate(player.angle); drawHero(ctx, -half, -half, player.width, player.height, currentHero, isBlinking(0));
         ctx.restore();
 
-        const uiCoinX = canvas.width / 2 - 20; drawCoinStyle(ctx, uiCoinX, 23, 8);
-        ctx.textAlign = "left"; ctx.font = "bold 20px Arial"; ctx.fillStyle = "black"; ctx.fillText(`${coins}`, uiCoinX + 16, 24);
-        ctx.fillStyle = "#f1c40f"; ctx.fillText(`${coins}`, uiCoinX + 15, 23);
+        // 다음 점프 방향 안내
+        if (!player.isJumping && !isGameOver && curH <= 500) {
+            const txt = jumpDirection === 1 ? "다음 점프 ▶" : "◀ 다음 점프";
+            ctx.font = "bold 13px " + FONT; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+            const tw = ctx.measureText(txt).width + 18;
+            const ty = player.y - 58 + Math.sin(animT * 4) * 2;
+            ctx.fillStyle = "rgba(20,15,50,0.55)";
+            roundRectPath(player.x + half - tw / 2, ty - 11, tw, 22, 11); ctx.fill();
+            ctx.fillStyle = "white"; ctx.fillText(txt, player.x + half, ty + 1);
+        }
 
-        drawButtonStyled("나가기", canvas.width - 45, 32.5, "rgba(0, 0, 0, 0.5)", 70, 35, "bold 14px Arial");
-        drawButtonStyled("저장", canvas.width - 45, 77.5, "rgba(39, 174, 96, 0.7)", 70, 35, "bold 14px Arial");
-        ctx.strokeStyle = "white"; ctx.lineWidth = 2; ctx.strokeRect(canvas.width - 80, 15, 70, 35); ctx.strokeRect(canvas.width - 80, 60, 70, 35);
+        // 힘 게이지
+        if (isCharging) {
+            const ratio = power / maxPower;
+            const bw = 54, bx = player.x + half - bw / 2, by = player.y - 32;   // 귀가 있는 캐릭터와 겹치지 않게 조금 위로
+            ctx.fillStyle = "rgba(0,0,0,0.5)";
+            roundRectPath(bx - 2, by - 2, bw + 4, 12, 6); ctx.fill();
+            if (ratio > 0.04) {
+                ctx.fillStyle = `hsl(${120 - 120 * ratio}, 85%, 55%)`;
+                roundRectPath(bx, by, bw * ratio, 8, 4); ctx.fill();
+            }
+        }
+        ctx.restore();
 
-        ctx.textAlign = "left"; ctx.font = "bold 16px Arial"; ctx.fillStyle = "black";
-        ctx.fillText(`최고: ${highScore}`, 21, 41); ctx.fillText(`높이: ${curH}`, 21, 71);
-        ctx.fillStyle = "#f1c40f"; ctx.fillText(`최고: ${highScore}`, 20, 40);
-        ctx.fillStyle = "white"; ctx.fillText(`높이: ${curH}`, 20, 70);
+        // --- HUD ---
+        ctx.fillStyle = "rgba(15,10,40,0.45)";
+        roundRectPath(12, 12, 120, 66, 16); ctx.fill();
+        ctx.textAlign = "left"; ctx.textBaseline = "middle"; ctx.font = "bold 16px " + FONT;
+        ctx.fillStyle = "#ffd54a"; ctx.fillText(`최고  ${highScore}`, 26, 33);
+        ctx.fillStyle = "white"; ctx.fillText(`높이  ${curH}`, 26, 58);
+
+        drawCoinPill(canvas.width / 2 - 10, 30, `${coins}`);
+
+        if (!isGameOver) drawButtonStyled("나가기", canvas.width - 45, 32.5, "rgba(40, 30, 80, 0.85)", 70, 35, "bold 14px " + FONT);
+        if (isGameOver) drawGameOver();
+        drawPopup();
+    }
+
+    // --- [게임 오버 화면] ---
+    const GO_BTN_Y = 425;
+    function drawGameOver() {
+        const k = Math.min(1, gameOverT / 0.35);              // 등장 애니메이션 진행도
+        const ease = 1 - Math.pow(1 - k, 3);
+        ctx.save();
+        ctx.fillStyle = `rgba(10, 8, 30, ${0.7 * ease})`; ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        const pw = 300, ph = 280, px = (canvas.width - pw) / 2, py = 190 + (1 - ease) * 60;
+        ctx.globalAlpha = ease;
+        ctx.save();
+        ctx.shadowColor = "rgba(0,0,0,0.55)"; ctx.shadowBlur = 30; ctx.shadowOffsetY = 10;
+        const pg = ctx.createLinearGradient(0, py, 0, py + ph);
+        pg.addColorStop(0, "#3d3170"); pg.addColorStop(1, "#1f1940");
+        ctx.fillStyle = pg; roundRectPath(px, py, pw, ph, 24); ctx.fill();
+        ctx.restore();
+        ctx.strokeStyle = "rgba(188,169,225,0.6)"; ctx.lineWidth = 2; roundRectPath(px, py, pw, ph, 24); ctx.stroke();
+
+        const cx = canvas.width / 2;
+        ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.lineJoin = "round";
+        ctx.font = "bold 40px " + FONT;
+        ctx.lineWidth = 8; ctx.strokeStyle = "#2a1d5c"; ctx.strokeText("GAME OVER", cx, py + 52);
+        ctx.fillStyle = "#ff7a8a"; ctx.fillText("GAME OVER", cx, py + 52);
+
+        // 떨어지는 캐릭터 (눈 감음)
+        drawHero(ctx, cx - 24, py + 98, 48, 48, currentHero, true);
+
+        const isNew = runMaxH > runStartBest && runMaxH > 0;
+        ctx.font = "bold 18px " + FONT; ctx.fillStyle = "white";
+        ctx.fillText(`이번 기록  ${runMaxH}`, cx, py + 168);
+        ctx.font = "15px " + FONT; ctx.fillStyle = "#ffd54a";
+        ctx.fillText(`최고 기록  ${highScore}`, cx, py + 195);
+        if (isNew) {
+            const bounce = Math.sin(animT * 6) * 2;
+            ctx.fillStyle = "#ffd54a"; roundRectPath(cx + 62, py + 155 + bounce, 54, 22, 11); ctx.fill();
+            ctx.fillStyle = "#3a2a00"; ctx.font = "bold 12px " + FONT; ctx.fillText("신기록!", cx + 89, py + 166 + bounce);
+        }
+
+        const by = GO_BTN_Y + (1 - ease) * 60;
+        drawButtonStyled("다시하기", 130, by, "#2ecc71", 130, 46, "bold 18px " + FONT);
+        drawButtonStyled("로비로", 270, by, "#7d74a8", 130, 46, "bold 18px " + FONT);
+        ctx.restore();
+    }
+
+    // 알림 (캐릭터 해금, 테스트 코인 등) - 모든 화면 위에 표시
+    function drawToast(dt) {
+        if (!toast) return;
+        toast.t -= dt;
+        if (toast.t <= 0) { toast = null; return; }
+        ctx.save();
+        ctx.globalAlpha = Math.min(1, toast.t * 2);
+        ctx.font = "bold 16px " + FONT; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        const tw = ctx.measureText(toast.text).width + 40;
+        ctx.fillStyle = "#ffd54a"; roundRectPath(canvas.width / 2 - tw / 2, 110, tw, 38, 19); ctx.fill();
+        ctx.fillStyle = "#3a2a00"; ctx.fillText(toast.text, canvas.width / 2, 130);
+        ctx.restore();
+    }
+
+    // [테스트용] F6을 누르면 코인 999개 + GangZi 해금 (배포 전에 이 블록을 지우면 됩니다)
+    window.addEventListener('keydown', (e) => {
+        if (e.key === 'F6' || e.code === 'F6') {
+            e.preventDefault();   // 브라우저 기본 동작(주소창 이동) 막기
+            coins = 999; saveCoins();
+            if (!unlockedHeroes.includes("GangZi")) { unlockedHeroes.push("GangZi"); saveUnlockedHeroes(); }
+            initAudio(); playCoinSound();
+            toast = { text: "[테스트] 코인 999 + GangZi 해금", t: 2 };
+        }
+    });
+
+    const lobbyPlatform = { x: 160, y: 262, width: 80, height: 14, speed: 0, holes: [{ x: 14, y: 6, size: 3 }, { x: 46, y: 9, size: 4 }, { x: 66, y: 4, size: 2.5 }] };
+
+    function drawLobby() {
+        const bg = ctx.createLinearGradient(0, 0, 0, canvas.height);
+        bg.addColorStop(0, "#1b1442"); bg.addColorStop(0.6, "#4a3592"); bg.addColorStop(1, "#c98bd8");
+        ctx.fillStyle = bg; ctx.fillRect(0, 0, canvas.width, canvas.height);
+        drawStars(1, animT * 6);
+        drawClouds(0.12, 0);
+
+        // 제목
+        const ty = 105 + Math.sin(animT * 2) * 5;
+        ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        ctx.font = "bold 62px " + FONT; ctx.lineJoin = "round";
+        ctx.lineWidth = 12; ctx.strokeStyle = "#2a1d5c"; ctx.strokeText("JUMBUKI", canvas.width / 2, ty);
+        const tg = ctx.createLinearGradient(0, ty - 30, 0, ty + 30);
+        tg.addColorStop(0, "#ffffff"); tg.addColorStop(1, "#BCA9E1");
+        ctx.fillStyle = tg; ctx.fillText("JUMBUKI", canvas.width / 2, ty);
+        ctx.font = "15px " + FONT; ctx.fillStyle = "rgba(255,255,255,0.8)";
+        ctx.fillText("꾹 눌러 힘을 모으고, 떼면 점프!", canvas.width / 2, 152);
+
+        // 통통 튀는 캐릭터 미리보기
+        const hop = Math.abs(Math.sin(animT * 2.5));
+        ctx.fillStyle = `rgba(0,0,0,${0.3 - hop * 0.15})`;
+        ctx.beginPath(); ctx.ellipse(200, 262, 22 - hop * 7, 4.5, 0, 0, Math.PI * 2); ctx.fill();
+        drawPlatform(lobbyPlatform);
+        drawHero(ctx, 172, Math.round(206 - hop * 26), 56, 56, currentHero, isBlinking(1));
+
+        drawButtonStyled("시작하기", canvas.width / 2, 320, "#2ecc71", 160, 50, "bold 20px " + FONT);
+        drawButtonStyled("상점", canvas.width / 2, 390, "#f39c12", 160, 50, "bold 20px " + FONT);
+        drawButtonStyled("데이터 삭제", canvas.width / 2, 460, "rgba(231, 76, 60, 0.8)", 160, 50, "bold 18px " + FONT);
+
+        // 하단 기록
+        ctx.fillStyle = "rgba(15,10,40,0.4)";
+        roundRectPath(70, 545, 260, 44, 22); ctx.fill();
+        ctx.font = "bold 16px " + FONT; ctx.textAlign = "center"; ctx.fillStyle = "#ffd54a";
+        ctx.fillText(`최고 기록  ${highScore}`, 150, 568);
+        drawCoinStyle(ctx, 248, 567, 8);
+        ctx.textAlign = "left"; ctx.fillText(`${coins}`, 262, 568);
+
         drawPopup();
     }
 
     function draw(timestamp) {
         let dt = (timestamp - lastTime) / 1000; if (isNaN(dt)) dt = 0; lastTime = timestamp;
-        if (gameState === 'PLAYING') { update(dt); renderGame(dt); }else if (gameState === 'LOBBY') {
-            ctx.fillStyle = "#1a1a1a"; ctx.fillRect(0, 0, canvas.width, canvas.height);
-            ctx.font = "bold 50px Arial"; ctx.fillStyle = "#BCA9E1"; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText("JUMBUKI", canvas.width / 2, 180);
-            drawButtonStyled("시작하기", canvas.width / 2, 320, "#27ae60", 160, 50, "bold 20px Arial");
-            drawButtonStyled("상점", canvas.width / 2, 390, "#f1c40f", 160, 50, "bold 20px Arial");
-            drawButtonStyled("데이터 삭제", canvas.width / 2, 460, "#FF4B4B", 160, 50, "bold 20px Arial");
-            drawPopup();
-        } else if (gameState === 'SHOP') { drawShopMenu(); }
+        if (dt > 0.1) dt = 0.1;
+        animT = timestamp / 1000;
+        if (gameState === 'PLAYING') { update(dt); renderGame(dt); }
+        else if (gameState === 'LOBBY') { drawLobby(); }
+        else if (gameState === 'SHOP') { drawShopMenu(); }
         else if (gameState === 'SETTINGS') {
-            ctx.fillStyle = "#1a1a1a"; ctx.fillRect(0, 0, canvas.width, canvas.height);
-            ctx.textAlign = "center"; ctx.font = "bold 30px Arial"; ctx.fillStyle = "white"; ctx.fillText("설정", canvas.width / 2, 200);
-            drawButtonStyled("뒤로가기", canvas.width / 2, 500, "#7f8c8d", 160, 50, "bold 20px Arial");
+            ctx.fillStyle = "#1b1442"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.textAlign = "center"; ctx.font = "bold 30px " + FONT; ctx.fillStyle = "white"; ctx.fillText("설정", canvas.width / 2, 200);
+            drawButtonStyled("뒤로가기", canvas.width / 2, 500, "#7d74a8", 160, 50, "bold 20px " + FONT);
         }
+        drawToast(dt);
         requestAnimationFrame(draw);
     }
 
-    function resetGame() { player.x = canvas.width / 2 - 20; player.y = floorY; player.vx = 0; player.vy = 0; player.angle = 0; player.isJumping = false; player.standingOn = null; cameraY = 0; power = 0; isCharging = false; initPlatforms(); }
+    function resetGame() {
+        groundGone = false; groundFade = 1; isGameOver = false; gameOverT = 0;
+        runMaxH = 0; runStartBest = highScore; particles = [];
+        player.x = canvas.width / 2 - player.width / 2; player.y = startY; player.squash = 0; player.vx = 0; player.vy = 0; player.angle = 0; player.isJumping = false; player.standingOn = null; cameraY = 0; power = 0; isCharging = false; initPlatforms(); }
 
     initPlatforms();
     requestAnimationFrame(draw);
