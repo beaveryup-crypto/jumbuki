@@ -676,8 +676,116 @@ function closedEyeColor(cells, k, skin) {
     return cells[k];
 }
 
-function makeHeroSprite(name, S, closed) {
-    const { cells, minY } = buildHeroGrid(name);
+// 캐릭터별로 직접 그린 "눈 감은 모습" 도트 (있으면 자동 계산 대신 이걸 사용)
+// rows: 위에서부터 한 줄에 8칸, startRow: 첫 줄의 행 번호, arc: 곡선 눈 선(‿)을 추가로 그릴지
+// 색 기호는 CLOSED_EYE_COLORS 참고, "." = 빈칸
+const CLOSED_EYE_COLORS = {
+    H: "#d5c5ef", S: "#ffede9", K: "#000000", D: "#24183a", W: "#ffffff",
+    B: "#5666f5", b: "#c1c7ff", Y: "#a89000", y: "#e2c200", P: "#ff9fb5"
+};
+const HERO_CLOSED_EYES = {
+    "Tenko Shibuki": {
+        arc: false,
+        startRow: -3,
+        rows: [
+            "H......H",  // -3
+            "HH....HH",  // -2
+            "HHH..HHH",  // -1
+            "HHHHHHHH",  //  0
+            "HHHHHHHH",  //  1
+            "HHHHHSHH",  //  2
+            "HHHHSSHH",  //  3
+            "KSSSSSSK",  //  4
+            "HKKSSKKH",  //  5  ← 감은 눈
+            "HSSSSSSH",  //  6
+            "SSSSSSSS"   //  7
+        ]
+    }
+};
+
+// 캐릭터마다 색 기호가 다르면 colors로 따로 지정 (없으면 CLOSED_EYE_COLORS 사용)
+const closedEye = (colors, rows) => ({ arc: false, startRow: 0, colors, rows });
+Object.assign(HERO_CLOSED_EYES, {
+    "GangZi": closedEye({ A: "#292a42", B: "#ffeae4", C: "#000000" }, [
+        "AAAAAAAA", "AABAAAAA", "ABBAAABA", "ABBAAABA", "CBBBBBBC", "BCCBBCCB", "BBBBBBBB", "BBBBBBBB"]),
+    "Ayatsuno Yuni": closedEye({ A: "#d2d3e1", B: "#dddff9", C: "#fbf7f4", D: "#000000" }, [
+        "AAABBAAA", "AAABBAAA", "AAACCAAA", "AAACCAAA", "DCCCCCCD", "CDDCCDDC", "CCCCCCCC", "ACCCCCCA"]),
+    "Sakihane Huya": closedEye({ A: "#4b484f", B: "#754e97", C: "#ffeae4", D: "#000000" }, [
+        "ABBBBBBA", "ABBBBCBA", "ABBBCCBA", "BBBCCCBB", "DCCCCCCD", "BDDCCDDB", "BCCCCCCB", "BBCCCCBB"]),
+    "Shirayuki Hina": closedEye({ A: "#bf4552", B: "#363339", C: "#000000", F: "#fff3e8" }, [
+        "ABBBBBBA", "BBBBBBBB", "BBBBBBBB", "BBBBBBBB", "CFFFFFFC", "BCCFFCCB", "BFFFFFFB", "BFFFFFFB"]),
+    "Neneko Mashiro": closedEye({ A: "#bab1b1", B: "#b8454b", C: "#fff3e8", D: "#000000" }, [
+        "AABAAAAA", "ACBAACAA", "CCBAACCA", "CCBCCCCA", "DCCCCCCD", "CDDCCDDA", "CCCCCCCA", "CCCCCCCA"]),
+    "Akane Lize": closedEye({ A: "#e1be65", B: "#7f2f2f", C: "#f9ecec", D: "#000000" }, [
+        "ABBBBBBB", "ABBBBCBB", "ABBBBCCB", "ABBCCCCB", "DCCCCCCD", "ADDCCDDB", "ACCCCCCB", "ACCCCCCB"]),
+    "Arahashi Tabi": closedEye({ A: "#a0e4ff", B: "#c2c2d1", C: "#fff0ec", D: "#000000" }, [
+        "AAABBAAA", "BBBAABBB", "AACAACAA", "AACAACAA", "DCCCCCCD", "CDDCCDDC", "CCCCCCCC", "CCCCCCCC"]),
+    "Aokumo Rin": closedEye({ A: "#f0f2f6", B: "#023eaf", C: "#000000", F: "#fffcf9" }, [
+        "AAAABAAA", "AAABAAAA", "AABAAAAA", "AABAAAAA", "CFFFFFFC", "FCCFFCCF", "FFFFFFFF", "FFFFFFFF"]),
+    "Hanako Nana": closedEye({ A: "#f99ca5", B: "#f12c79", C: "#000000", F: "#ffeae4" }, [
+        "AAAAABAA", "AAAABAAA", "AAAAAAAA", "AAAAAAAA", "CFFFFFFC", "ACCFFCCA", "AFFFFFFA", "AFFFFFFA"]),
+    "Yuzuha Riko": closedEye({ A: "#e2f6c7", B: "#ffeae4", C: "#000000" }, [
+        "AAAAAAAA", "AABAAAAA", "ABBAABAA", "ABBAABAA", "CBBBABBC", "BCCBACCB", "BBBBBABB", "ABBBBBBA"])
+});
+
+function closedEyeCells(def) {
+    const colors = def.colors || CLOSED_EYE_COLORS;
+    const cells = {};
+    def.rows.forEach((row, i) => {
+        [...row].forEach((ch, gx) => { const col = colors[ch]; if (col) cells[gx + "," + (def.startRow + i)] = col; });
+    });
+    return cells;
+}
+
+// 게임 오버 얼굴 (>< 눈). 직접 그린 도트가 있으면 그걸 쓰고,
+// 없으면 그 캐릭터의 눈 감은 모습에 시부키와 같은 >< 눈 모양을 얹어서 만든다.
+const HERO_GAMEOVER_FACES = {
+    "Tenko Shibuki": {
+        startRow: -3,
+        colors: { A: "#d5c5ef", B: "#ffede9", C: "#000000" },
+        rows: [
+            "A......A",  // -3
+            "AA....AA",  // -2
+            "AAA..AAA",  // -1
+            "AAAAAAAA",  //  0
+            "AAAAAAAA",  //  1
+            "AAAAABAA",  //  2
+            "ACAABBCA",  //  3  ┐
+            "ABCBBCBA",  //  4  ├ >< 눈
+            "ACBBBBCA",  //  5  ┘
+            "ABBBBBBA",  //  6
+            "BBBBBBBB"   //  7
+        ]
+    }
+};
+const GAMEOVER_EYE_DOTS = ["1,3", "6,3", "2,4", "5,4", "1,5", "6,5"];   // > <
+
+function deriveGameOverCells(closedCells, skin) {
+    const cells = { ...closedCells };
+    // 4행 양 끝 눈꼬리 → 바로 아래 칸(옆머리/볼) 색, 5행 감은 눈 안쪽 → 피부색
+    ["0", "7"].forEach(x => { if (cells[x + ",5"]) cells[x + ",4"] = cells[x + ",5"]; });
+    ["2,5", "5,5"].forEach(k => { cells[k] = skin; });
+    GAMEOVER_EYE_DOTS.forEach(k => { cells[k] = "#000000"; });
+    return cells;
+}
+
+// mode: false/"open" = 눈 뜸, true/"closed" = 눈 감음, "gameover" = 게임 오버 얼굴
+function makeHeroSprite(name, S, mode) {
+    if (mode === true) mode = "closed";
+    if (!mode) mode = "open";
+    const closed = mode !== "open";
+    const grid = buildHeroGrid(name);
+    const minY = grid.minY;
+    const closedDef = closed ? HERO_CLOSED_EYES[name] : null;
+    const openCells = grid.cells;
+    const skin0 = openCells["3,4"] || "#ffeae4";
+    let cells;
+    if (!closed) cells = openCells;
+    else if (closedDef) cells = closedEyeCells(closedDef);
+    else cells = Object.fromEntries(Object.keys(openCells).map(k => [k, closedEyeColor(openCells, k, skin0)]));
+    if (mode === "gameover") {
+        cells = HERO_GAMEOVER_FACES[name] ? closedEyeCells(HERO_GAMEOVER_FACES[name]) : deriveGameOverCells(cells, skin0);
+    }
     const pad = Math.max(1, Math.round(S * 0.22));          // 외곽선 두께
     const rows = 8 - minY;
     const cv = document.createElement("canvas");
@@ -685,7 +793,7 @@ function makeHeroSprite(name, S, closed) {
     const c = cv.getContext("2d");
     const ox = pad, oy = pad - minY * S;
     const cellRect = (gx, gy) => [Math.round(ox + gx * S), Math.round(oy + gy * S), Math.round(ox + (gx + 1) * S) - Math.round(ox + gx * S), Math.round(oy + (gy + 1) * S) - Math.round(oy + gy * S)];
-    const skin = cells["3,4"] || "#ffeae4";
+    const skin = openCells["3,4"] || "#ffeae4";
 
     // 1) 외곽선: 실루엣을 사방으로 조금씩 밀어서 진하게 깔기
     const mask = document.createElement("canvas"); mask.width = cv.width; mask.height = cv.height;
@@ -696,7 +804,7 @@ function makeHeroSprite(name, S, closed) {
     // 2) 도트 채우기 (눈 감은 버전은 눈 자리를 피부색으로)
     Object.keys(cells).forEach(k => {
         const [gx, gy] = k.split(",").map(Number);
-        c.fillStyle = closed ? closedEyeColor(cells, k, skin) : cells[k];
+        c.fillStyle = cells[k];
         c.fillRect(...cellRect(gx, gy));
     });
 
@@ -711,7 +819,7 @@ function makeHeroSprite(name, S, closed) {
     if (!closed) {
         c.fillStyle = "rgba(255,255,255,0.95)";
         [2, 5].forEach(gx => { if (cells[gx + ",4"]) c.fillRect(Math.round(ox + (gx + 0.5) * S), Math.round(oy + 4.12 * S), Math.max(1, Math.round(S * 0.36)), Math.max(1, Math.round(S * 0.36))); });
-    } else {
+    } else if (mode === "closed" && (!closedDef || closedDef.arc)) {
         // 감은 눈: 눈 자리 가운데에 아래로 둥글게 휜 선 하나 (‿)
         c.strokeStyle = "#24183a"; c.lineWidth = Math.max(2, S * 0.5); c.lineCap = "round";   // 감은 눈 선 두께
         [1.5, 6.5].forEach(ex => {
@@ -723,14 +831,15 @@ function makeHeroSprite(name, S, closed) {
 
     // 5) 볼터치 (그 자리가 피부색일 때만)
     c.fillStyle = "rgba(255,110,140,0.38)";
-    [1, 6].forEach(gx => { if (cells[gx + ",6"] === skin) { c.beginPath(); c.ellipse(ox + (gx + 0.5) * S, oy + 6.3 * S, S * 0.55, S * 0.32, 0, 0, Math.PI * 2); c.fill(); } });
+    [1, 6].forEach(gx => { if (openCells[gx + ",6"] === skin && cells[gx + ",6"] === skin) { c.beginPath(); c.ellipse(ox + (gx + 0.5) * S, oy + 6.3 * S, S * 0.55, S * 0.32, 0, 0, Math.PI * 2); c.fill(); } });
 
     return { canvas: cv, pad, minY, S };
 }
 
-function getHeroSprite(name, S, closed) {
-    const key = name + "|" + S + "|" + (closed ? 1 : 0);
-    if (!heroSpriteCache[key]) heroSpriteCache[key] = makeHeroSprite(name, S, closed);
+function getHeroSprite(name, S, mode) {
+    const m = mode === "gameover" ? "gameover" : (mode ? "closed" : "open");
+    const key = name + "|" + S + "|" + m;
+    if (!heroSpriteCache[key]) heroSpriteCache[key] = makeHeroSprite(name, S, m);
     return heroSpriteCache[key];
 }
 
@@ -740,10 +849,11 @@ function isBlinking(seed) {
     return t < 0.13;
 }
 
-function drawHero(ctx, x, y, width, height, heroName, blink) {
+// face: false = 눈 뜸, true = 눈 감음(깜빡임), "gameover" = 게임 오버 얼굴
+function drawHero(ctx, x, y, width, height, heroName, face) {
     const name = heroData[heroName] ? heroName : "Tenko Shibuki";
     const S = width / 8;
-    const spr = getHeroSprite(name, S, !!blink);
+    const spr = getHeroSprite(name, S, face);
     const sy = height / width;
     ctx.drawImage(spr.canvas, x - spr.pad, y + (spr.minY * S - spr.pad) * sy, spr.canvas.width, spr.canvas.height * sy);
 }
@@ -1513,7 +1623,7 @@ const curH = Math.max(0, Math.floor((startY - player.y) / 10)); // 현재 높이
         ctx.fillStyle = "#ff7a8a"; ctx.fillText("GAME OVER", cx, py + 52);
 
         // 떨어지는 캐릭터 (눈 감음)
-        drawHero(ctx, cx - 24, py + 98, 48, 48, currentHero, true);
+        drawHero(ctx, cx - 24, py + 98, 48, 48, currentHero, "gameover");
 
         const isNew = runMaxH > runStartBest && runMaxH > 0;
         ctx.font = "bold 18px " + FONT; ctx.fillStyle = "white";
