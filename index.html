@@ -140,7 +140,7 @@ const shopSections = [
         player.isJumping = true; player.vy = 0; player.vx = 0; player.standingOn = null;
         isGameOver = false; gameOverT = 0; isCharging = false; particles = [];
         // 예전 버전 저장 기록에는 아래 값이 없으므로 기본값 사용
-        groundGone = !!data.groundGone; groundFade = groundGone ? 0 : 1;
+        groundGone = !!data.groundGone; groundFade = 1;
         runMaxH = data.runMaxH || Math.max(0, Math.floor((startY - player.y) / 10));
         runStartBest = (data.runStartBest !== undefined) ? data.runStartBest : highScore;
         // 저장 기록은 남겨둠 (다음에 나가거나 창을 닫을 때 새 위치로 덮어씀)
@@ -192,17 +192,17 @@ const shopSections = [
     const player = { x: canvas.width / 2 - PLAYER_SIZE / 2, y: startY, width: PLAYER_SIZE, height: PLAYER_SIZE, vx: 0, vy: 0, angle: 0, isJumping: false, standingOn: null, squash: 0 };
 
     // --- [게임 오버 규칙] ---
-    // 발판에서 점프하면 그 발판보다 아래 있는 발판(1번 발판이면 땅까지)은 무너져 사라지고,
-    // 점프한 발판보다 아래로 떨어지면 게임 오버.
-    let groundGone = false;   // 땅이 무너졌는지
-    let groundFade = 1;       // 땅 사라지는 연출 (1 → 0)
+    // 발판에서 점프하면 밟던 발판과 바로 아래 발판만 남고 그 아래는 무너지며,
+    // 남은 발판보다 아래로 떨어지면 게임 오버. 시작 땅은 사라지지 않고 항상 보임.
+    let groundGone = false;   // true = 1번 발판이 무너져서 땅으로 떨어지면 게임 오버 (땅 자체는 그대로 보임)
+    let groundFade = 1;       // 땅은 항상 보이므로 1로 고정
     let isGameOver = false;
     let gameOverT = 0;        // 게임 오버 화면 등장 연출용 시간
     let runMaxH = 0;          // 이번 판 최고 높이
     let runStartBest = 0;     // 이번 판 시작할 때의 최고 기록 (신기록 판단용)
 
     // 점프할 때: 밟고 있던 발판과 그 바로 아래 발판 1개는 남기고, 그보다 더 아래만 무너뜨림
-    // (땅은 0번 발판으로 취급 → 2번 발판에서 뛸 때부터 땅이 무너짐)
+    // (시작 땅은 무너지지 않음. 1번 발판이 무너진 뒤부터는 땅까지 떨어지면 게임 오버)
     function crumbleBelow(fromPlat) {
         if (!fromPlat) return;                          // 땅에서 뛸 때는 아래에 아무것도 없음
         const keepFrom = fromPlat.index - 1;            // 이 번호 이상은 남김
@@ -210,17 +210,12 @@ const shopSections = [
         platforms.forEach(p => {
             if (p.index < keepFrom && !p.removing) { p.removing = true; p.fade = 1; p.fall = 0; count++; }
         });
-        let groundJustGone = false;
-        if (!groundGone && keepFrom > 0) {
-            groundGone = true; groundJustGone = true;
-            toast = { text: "아래 발판이 무너졌어요! 떨어지면 게임 오버", t: 2.5 };
-        }
-        if (count > 0 || groundJustGone) playCrumbleSound();
+        if (keepFrom > 1) groundGone = true;            // 1번 발판이 사라지면 땅으로는 다시 못 올라옴
+        if (count > 0) playCrumbleSound();
     }
 
     // 무너지는 발판/땅 연출 진행, 다 사라진 발판은 목록에서 제거
     function updateCrumbles(dt) {
-        if (groundGone && groundFade > 0) groundFade = Math.max(0, groundFade - dt * 1.5);
         let any = false;
         platforms.forEach(p => {
             if (!p.removing) return;
@@ -1230,6 +1225,8 @@ function drawShopSection(title, y, count, color) {
                     }
                 });
             }
+            // 1번 발판까지 무너진 뒤 땅에 떨어지면 게임 오버 (땅은 남아 있지만 다시 올라갈 발판이 없음)
+            if (groundGone && player.y >= startY) { player.y = startY; triggerGameOver(); return; }
             if (!groundGone && player.y >= startY) {
                 player.y = startY; spawnParticles(player.x + player.width / 2, groundY, "rgba(255,255,255,0.9)", 8, 3); player.squash = 1; player.vy = 0; player.vx = 0; player.isJumping = false; player.standingOn = null; 
                 player.angle = Math.round(player.angle / (Math.PI / 2)) * (Math.PI / 2); // 바닥 착지 각도 수정
