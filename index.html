@@ -910,7 +910,7 @@ function handleInputStart(x, y) {
                 else { gameState = 'PLAYING'; initAudio(); resetGame(); }
             }
             else if (y > 365 && y < 415) { gameState = 'SHOP'; shopScrollY = 0; }
-            else if (y > 435 && y < 485) { popupType = "DATA_RESET"; isPopupOpen = true; }
+            else if (y > 435 && y < 485) { gameState = 'SETTINGS'; }
         }
     } 
     else if (gameState === 'PLAYING') {
@@ -999,7 +999,12 @@ else if (gameState === 'SHOP') {
     }
 }
     else if (gameState === 'SETTINGS') {
-        if (x > 120 && x < 280 && y > 475 && y < 525) { gameState = 'LOBBY'; }
+        // 데이터 삭제 → 확인 팝업
+        if (x > SET_DEL_BTN.x - SET_DEL_BTN.w / 2 && x < SET_DEL_BTN.x + SET_DEL_BTN.w / 2 && y > SET_DEL_BTN.y - SET_DEL_BTN.h / 2 && y < SET_DEL_BTN.y + SET_DEL_BTN.h / 2) {
+            popupType = "DATA_RESET"; isPopupOpen = true;
+        }
+        // 뒤로가기
+        else if (x > 120 && x < 280 && y > 575 && y < 625) { gameState = 'LOBBY'; }
     }
 }
 
@@ -1034,7 +1039,7 @@ else if (gameState === 'SHOP') {
 canvas.addEventListener('touchstart', (e) => {
     // 1. 팝업이 떠 있거나 상점 상태일 때는 터치 동작이 
     // 마우스 클릭으로 중복 인식되지 않도록 브라우저 기본 동작을 차단합니다.
-    if (isPopupOpen || gameState === 'SHOP' || gameState === 'LOBBY') {
+    if (isPopupOpen || gameState === 'SHOP' || gameState === 'LOBBY' || gameState === 'SETTINGS') {
         e.preventDefault(); 
     }
 
@@ -1733,7 +1738,7 @@ const curH = Math.max(0, Math.floor((startY - player.y) / 10)); // 현재 높이
 
         drawButtonStyled("시작하기", canvas.width / 2, 320, "#2ecc71", 160, 50, "bold 20px " + FONT);
         drawButtonStyled("상점", canvas.width / 2, 390, "#f39c12", 160, 50, "bold 20px " + FONT);
-        drawButtonStyled("데이터 삭제", canvas.width / 2, 460, "rgba(231, 76, 60, 0.8)", 160, 50, "bold 18px " + FONT);
+        drawButtonStyled("설정", canvas.width / 2, 460, "#7d74a8", 160, 50, "bold 20px " + FONT);
 
         // 하단 기록
         ctx.fillStyle = "rgba(15,10,40,0.4)";
@@ -1746,6 +1751,34 @@ const curH = Math.max(0, Math.floor((startY - player.y) / 10)); // 현재 높이
         drawPopup();
     }
 
+    // --- [설정 화면] ---
+    const SET_DEL_BTN = { x: 200, y: 318, w: 200, h: 46 };
+    function drawSettings() {
+        const bg = ctx.createLinearGradient(0, 0, 0, canvas.height);
+        bg.addColorStop(0, "#1b1442"); bg.addColorStop(1, "#2f2266");
+        ctx.fillStyle = bg; ctx.fillRect(0, 0, canvas.width, canvas.height);
+        drawStars(0.6, animT * 4);
+
+        // 제목
+        ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.lineJoin = "round";
+        ctx.font = "bold 42px " + FONT;
+        ctx.lineWidth = 8; ctx.strokeStyle = "#2a1d5c"; ctx.strokeText("설정", canvas.width / 2, 110);
+        ctx.fillStyle = "#BCA9E1"; ctx.fillText("설정", canvas.width / 2, 110);
+
+        // 데이터 관리 카드
+        const cx = 40, cy = 200, cw = 320, ch = 160;
+        ctx.fillStyle = "rgba(255,255,255,0.07)"; roundRectPath(cx, cy, cw, ch, 20); ctx.fill();
+        ctx.strokeStyle = "rgba(188,169,225,0.35)"; ctx.lineWidth = 1.5; ctx.stroke();
+        ctx.font = "bold 18px " + FONT; ctx.fillStyle = "white";
+        ctx.fillText("데이터 관리", canvas.width / 2, cy + 30);
+        ctx.font = "13px " + FONT; ctx.fillStyle = "#b9b0d8";
+        ctx.fillText("코인, 캐릭터, 최고 기록이 모두 지워져요.", canvas.width / 2, cy + 64);
+        drawButtonStyled("데이터 삭제", SET_DEL_BTN.x, SET_DEL_BTN.y, "rgba(231, 76, 60, 0.85)", SET_DEL_BTN.w, SET_DEL_BTN.h, "bold 18px " + FONT);
+
+        drawButtonStyled("뒤로가기", canvas.width / 2, 600, "#7d74a8", 160, 50, "bold 20px " + FONT);
+        drawPopup();
+    }
+
     function draw(timestamp) {
         let dt = (timestamp - lastTime) / 1000; if (isNaN(dt)) dt = 0; lastTime = timestamp;
         if (dt > 0.1) dt = 0.1;
@@ -1753,11 +1786,7 @@ const curH = Math.max(0, Math.floor((startY - player.y) / 10)); // 현재 높이
         if (gameState === 'PLAYING') { update(dt); renderGame(dt); }
         else if (gameState === 'LOBBY') { drawLobby(); }
         else if (gameState === 'SHOP') { drawShopMenu(); }
-        else if (gameState === 'SETTINGS') {
-            ctx.fillStyle = "#1b1442"; ctx.fillRect(0, 0, canvas.width, canvas.height);
-            ctx.textAlign = "center"; ctx.font = "bold 30px " + FONT; ctx.fillStyle = "white"; ctx.fillText("설정", canvas.width / 2, 200);
-            drawButtonStyled("뒤로가기", canvas.width / 2, 500, "#7d74a8", 160, 50, "bold 20px " + FONT);
-        }
+        else if (gameState === 'SETTINGS') { drawSettings(); }
         drawToast(dt);
         requestAnimationFrame(draw);
     }
